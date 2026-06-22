@@ -33,8 +33,26 @@ import {
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const SESSION_KEY = "ventas_session";
-const DATA_KEY = "ventas_data";
-const FIADOS_KEY = "ventas_fiados";
+
+// ─── Helpers API ───────────────────────────────────────────────────────────────
+const api = {
+  getVentas: () => fetch("/api/ventas").then((r) => r.json()),
+  postVenta: (v) =>
+    fetch("/api/ventas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(v),
+    }),
+  deleteVenta: (id) => fetch(`/api/ventas/${id}`, { method: "DELETE" }),
+  getFiados: () => fetch("/api/fiados").then((r) => r.json()),
+  postFiado: (f) =>
+    fetch("/api/fiados", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(f),
+    }),
+  deleteFiado: (id) => fetch(`/api/fiados/${id}`, { method: "DELETE" }),
+};
 
 const DIAS_SEMANA = [
   "Domingo",
@@ -218,7 +236,7 @@ function SaleForm({ onSave }) {
   const [success, setSuccess] = useState(false);
   const [montoError, setMontoError] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     const val = Number(monto);
     if (!monto || isNaN(val) || val <= 0) {
@@ -232,10 +250,8 @@ function SaleForm({ onSave }) {
       metodoPago,
       monto: Math.round(val),
     };
-    const existing = JSON.parse(localStorage.getItem(DATA_KEY) || "[]");
-    const updated = [...existing, venta];
-    localStorage.setItem(DATA_KEY, JSON.stringify(updated));
-    onSave(updated);
+    await api.postVenta(venta);
+    await onSave();
     setMonto("");
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
@@ -1213,7 +1229,7 @@ function FiadosExpress({ fiados, onSave }) {
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validate()) return;
     const fiado = {
@@ -1222,19 +1238,17 @@ function FiadosExpress({ fiados, onSave }) {
       nombre: nombre.trim(),
       monto: Math.round(Number(monto)),
     };
-    const updated = [...fiados, fiado];
-    localStorage.setItem(FIADOS_KEY, JSON.stringify(updated));
-    onSave(updated);
+    await api.postFiado(fiado);
+    await onSave();
     setNombre("");
     setMonto("");
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
   };
 
-  const handleRemove = (id) => {
-    const updated = fiados.filter((f) => f.id !== id);
-    localStorage.setItem(FIADOS_KEY, JSON.stringify(updated));
-    onSave(updated);
+  const handleRemove = async (id) => {
+    await api.deleteFiado(id);
+    await onSave();
   };
 
   const totalPendiente = fiados.reduce((acc, f) => acc + f.monto, 0);
@@ -1454,10 +1468,8 @@ export default function SalesDashboard() {
     if (session?.loggedIn && session?.date === todayStr()) {
       setIsLoggedIn(true);
     }
-    const data = JSON.parse(localStorage.getItem(DATA_KEY) || "[]");
-    setVentas(data);
-    const fiadosData = JSON.parse(localStorage.getItem(FIADOS_KEY) || "[]");
-    setFiados(fiadosData);
+    api.getVentas().then(setVentas);
+    api.getFiados().then(setFiados);
   }, []);
 
   const handleLogin = () => setIsLoggedIn(true);
@@ -1467,12 +1479,19 @@ export default function SalesDashboard() {
     setIsLoggedIn(false);
   };
 
-  const handleSave = (newVentas) => setVentas(newVentas);
-  const handleSaveFiado = (newFiados) => setFiados(newFiados);
+  const handleSave = async () => {
+    const updated = await api.getVentas();
+    setVentas(updated);
+  };
 
-  const handleDelete = (id) => {
-    const updated = ventas.filter((v) => v.id !== id);
-    localStorage.setItem(DATA_KEY, JSON.stringify(updated));
+  const handleSaveFiado = async () => {
+    const updated = await api.getFiados();
+    setFiados(updated);
+  };
+
+  const handleDelete = async (id) => {
+    await api.deleteVenta(id);
+    const updated = await api.getVentas();
     setVentas(updated);
   };
 
