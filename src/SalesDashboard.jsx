@@ -29,6 +29,7 @@ import {
   ShoppingBag,
   Users,
   CheckCircle,
+  Pencil,
 } from "lucide-react";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
@@ -46,7 +47,8 @@ const api = {
   postAbono:   (a) => fetch("/api/abonos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) }),
   deleteAbono: (id) => fetch(`/api/abonos/${id}`, { method: "DELETE" }),
   getGastos:   () => fetch("/api/gastos").then((r) => r.json()),
-  postGasto:   (g) => fetch("/api/gastos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }),
+  postGasto:   (g) => fetch("/api/gastos",  { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }),
+  patchGasto:  (id, d) => fetch(`/api/gastos/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
   deleteGasto: (id) => fetch(`/api/gastos/${id}`, { method: "DELETE" }),
 };
 
@@ -1597,12 +1599,18 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
 
 // ─── GASTOS ───────────────────────────────────────────────────────────────────
 function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onYearChange, onSaveGasto }) {
+  // ── Form nuevo gasto ────────────────────────────────────────────────────────
   const [fecha, setFecha] = useState(todayStr());
   const [empresa, setEmpresa] = useState("");
   const [descripcion, setDescripcion] = useState("");
   const [monto, setMonto] = useState("");
+  const [estadoPago, setEstadoPago] = useState("pendiente");
   const [errors, setErrors] = useState({});
   const [success, setSuccess] = useState(false);
+
+  // ── Edición inline ──────────────────────────────────────────────────────────
+  const [editingId, setEditingId] = useState(null);
+  const [editFields, setEditFields] = useState({});
 
   const empresasExistentes = useMemo(
     () => [...new Set(gastos.map((g) => g.empresa))].sort(),
@@ -1620,19 +1628,16 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
 
   const totalMes = gastosMes.reduce((s, g) => s + g.monto, 0);
   const cantidadMes = gastosMes.length;
+  const totalPendiente = gastosMes
+    .filter((g) => (g.estado_pago || "pendiente") === "pendiente")
+    .reduce((s, g) => s + g.monto, 0);
 
-  // Agrupado por empresa para el mes
   const porEmpresa = useMemo(() => {
     const map = {};
-    gastosMes.forEach((g) => {
-      map[g.empresa] = (map[g.empresa] || 0) + g.monto;
-    });
-    return Object.entries(map)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+    gastosMes.forEach((g) => { map[g.empresa] = (map[g.empresa] || 0) + g.monto; });
+    return Object.entries(map).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [gastosMes]);
 
-  // Gasto diario del mes para gráfico de línea
   const gastoDiario = useMemo(() => {
     const diasEnMes = new Date(selectedYear, selectedMonth, 0).getDate();
     return Array.from({ length: diasEnMes }, (_, i) => {
@@ -1645,6 +1650,18 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
 
   const COLORES_GASTOS = ["#FF6B35", "#FF9F1C", "#FFBF69", "#FFE66D", "#CBF3F0", "#2EC4B6"];
 
+  const ESTADOS = [
+    { value: "pendiente",     label: "Pendiente",     color: "#FF6B35" },
+    { value: "efectivo",      label: "Efectivo",      color: "#00C896" },
+    { value: "transferencia", label: "Transferencia", color: "#3b82f6" },
+  ];
+
+  const badgeStyle = (estado) => {
+    const e = ESTADOS.find((x) => x.value === (estado || "pendiente")) || ESTADOS[0];
+    return { color: e.color, background: e.color + "1a", border: `1px solid ${e.color}40` };
+  };
+
+  // ── Handlers form nuevo ────────────────────────────────────────────────────
   const validate = () => {
     const e = {};
     if (!empresa.trim()) e.empresa = "Ingresa el nombre de la empresa.";
@@ -1657,18 +1674,19 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
   const handleSubmit = async (ev) => {
     ev.preventDefault();
     if (!validate()) return;
-    const gasto = {
+    await api.postGasto({
       id: Date.now().toString(),
       fecha,
       empresa: empresa.trim(),
       descripcion: descripcion.trim() || null,
       monto: Math.round(Number(monto)),
-    };
-    await api.postGasto(gasto);
+      estado_pago: estadoPago,
+    });
     await onSaveGasto();
     setEmpresa("");
     setDescripcion("");
     setMonto("");
+    setEstadoPago("pendiente");
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
   };
@@ -1676,6 +1694,32 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
   const handleDelete = async (id) => {
     await api.deleteGasto(id);
     await onSaveGasto();
+  };
+
+  // ── Handlers edición inline ────────────────────────────────────────────────
+  const openEdit = (g) => {
+    setEditingId(g.id);
+    setEditFields({
+      fecha: g.fecha,
+      empresa: g.empresa,
+      descripcion: g.descripcion || "",
+      monto: String(g.monto),
+      estado_pago: g.estado_pago || "pendiente",
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    const val = Number(editFields.monto);
+    if (!editFields.empresa.trim() || !editFields.monto || isNaN(val) || val <= 0) return;
+    await api.patchGasto(editingId, {
+      fecha: editFields.fecha,
+      empresa: editFields.empresa.trim(),
+      descripcion: editFields.descripcion.trim() || null,
+      monto: Math.round(val),
+      estado_pago: editFields.estado_pago,
+    });
+    await onSaveGasto();
+    setEditingId(null);
   };
 
   const years = [];
@@ -1689,9 +1733,7 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
       <div className="flex gap-2">
         <select value={selectedMonth} onChange={(e) => onMonthChange(Number(e.target.value))}
           className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm flex-1">
-          {MESES_NOMBRES.map((m, i) => (
-            <option key={i + 1} value={i + 1}>{m}</option>
-          ))}
+          {MESES_NOMBRES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
         </select>
         <select value={selectedYear} onChange={(e) => onYearChange(Number(e.target.value))}
           className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm">
@@ -1699,15 +1741,21 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
         </select>
       </div>
 
-      {/* Cards resumen mes */}
+      {/* Cards resumen */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 col-span-2">
-          <p className="text-gray-500 text-xs mb-1">Total gastos {MESES_NOMBRES[selectedMonth - 1]}</p>
-          <p className="text-2xl font-bold text-white">{formatCLP(totalMes)}</p>
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Total {MESES_NOMBRES[selectedMonth - 1]}</p>
+          <p className="text-xl font-bold text-white">{formatCLP(totalMes)}</p>
         </div>
         <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
           <p className="text-gray-500 text-xs mb-1">Facturas</p>
-          <p className="text-2xl font-bold" style={{ color: "#FF6B35" }}>{cantidadMes}</p>
+          <p className="text-xl font-bold" style={{ color: "#FF6B35" }}>{cantidadMes}</p>
+        </div>
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Por pagar</p>
+          <p className="text-xl font-bold" style={{ color: totalPendiente > 0 ? "#FF6B35" : "#00C896" }}>
+            {formatCLP(totalPendiente)}
+          </p>
         </div>
       </div>
 
@@ -1761,6 +1809,23 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
             {errors.monto && <p className="text-red-400 text-xs mt-1">{errors.monto}</p>}
           </div>
 
+          {/* Selector estado de pago */}
+          <div>
+            <label className="block text-gray-400 text-xs font-medium mb-2">Estado del pago</label>
+            <div className="flex gap-2">
+              {ESTADOS.map((e) => (
+                <button key={e.value} type="button"
+                  onClick={() => setEstadoPago(e.value)}
+                  className="flex-1 py-2 rounded-xl text-xs font-semibold border transition"
+                  style={estadoPago === e.value
+                    ? { background: e.color, color: "#0a0a0a", borderColor: e.color }
+                    : { background: "transparent", color: e.color, borderColor: e.color + "50" }}>
+                  {e.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {success && (
             <div className="flex items-center gap-2 rounded-xl p-3 border"
               style={{ background: "rgba(0,200,150,0.1)", borderColor: "rgba(0,200,150,0.3)" }}>
@@ -1779,10 +1844,9 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
         </form>
       </div>
 
-      {/* Gráficos — solo si hay datos */}
+      {/* Gráficos */}
       {gastosMes.length > 0 && (
         <>
-          {/* Barras por empresa */}
           {porEmpresa.length > 0 && (
             <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
               <h3 className="text-white font-semibold text-sm mb-4">Gasto por empresa — {MESES_NOMBRES[selectedMonth - 1]}</h3>
@@ -1791,21 +1855,16 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
                   <XAxis dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} tick={{ fill: "#9ca3af", fontSize: 10 }} width={45} />
-                  <Tooltip
-                    contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
-                    labelStyle={{ color: "#f9fafb", fontWeight: 600 }}
-                    formatter={(v) => [formatCLP(v), "Gasto"]} />
+                  <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
+                    labelStyle={{ color: "#f9fafb", fontWeight: 600 }} formatter={(v) => [formatCLP(v), "Gasto"]} />
                   <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                    {porEmpresa.map((_, i) => (
-                      <Cell key={i} fill={COLORES_GASTOS[i % COLORES_GASTOS.length]} />
-                    ))}
+                    {porEmpresa.map((_, i) => <Cell key={i} fill={COLORES_GASTOS[i % COLORES_GASTOS.length]} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           )}
 
-          {/* Línea diaria */}
           <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
             <h3 className="text-white font-semibold text-sm mb-4">Gasto diario — {MESES_NOMBRES[selectedMonth - 1]}</h3>
             <ResponsiveContainer width="100%" height={160}>
@@ -1813,10 +1872,8 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
                 <XAxis dataKey="dia" tick={{ fill: "#9ca3af", fontSize: 10 }} />
                 <YAxis tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} tick={{ fill: "#9ca3af", fontSize: 10 }} width={45} />
-                <Tooltip
-                  contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
-                  labelStyle={{ color: "#f9fafb", fontWeight: 600 }}
-                  formatter={(v) => [formatCLP(v), "Gasto"]} />
+                <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
+                  labelStyle={{ color: "#f9fafb", fontWeight: 600 }} formatter={(v) => [formatCLP(v), "Gasto"]} />
                 <Line type="monotone" dataKey="total" stroke="#FF6B35" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -1824,7 +1881,7 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
         </>
       )}
 
-      {/* Lista de facturas del mes */}
+      {/* Lista de facturas */}
       <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
           <h3 className="text-white font-semibold text-sm">
@@ -1842,28 +1899,96 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
           </div>
         ) : (
           <div className="divide-y divide-gray-800">
-            {[...gastosMes].reverse().map((g) => (
-              <div key={g.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-800 transition">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#FF6B35" }} />
-                  <div className="min-w-0">
-                    <p className="text-white text-sm font-medium truncate">{g.empresa}</p>
-                    <p className="text-gray-500 text-xs">
-                      {parseLocalDate(g.fecha).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })}
-                      {g.descripcion && <span className="ml-1 text-gray-600">— {g.descripcion}</span>}
-                    </p>
+            {[...gastosMes].reverse().map((g) => {
+              const isEditing = editingId === g.id;
+              if (isEditing) {
+                return (
+                  <div key={g.id} className="px-5 py-4 bg-gray-800 space-y-3">
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" value={editFields.fecha}
+                        onChange={(e) => setEditFields((p) => ({ ...p, fecha: e.target.value }))}
+                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none" />
+                      <input type="text" value={editFields.empresa} list="empresas-edit-list"
+                        onChange={(e) => setEditFields((p) => ({ ...p, empresa: e.target.value }))}
+                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
+                        placeholder="Empresa" />
+                      <datalist id="empresas-edit-list">
+                        {empresasExistentes.map((n) => <option key={n} value={n} />)}
+                      </datalist>
+                    </div>
+                    <input type="text" value={editFields.descripcion}
+                      onChange={(e) => setEditFields((p) => ({ ...p, descripcion: e.target.value }))}
+                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
+                      placeholder="Descripción / N° Factura (opcional)" />
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">$</span>
+                      <input type="number" value={editFields.monto} min="1" step="1"
+                        onChange={(e) => setEditFields((p) => ({ ...p, monto: e.target.value }))}
+                        className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-4 py-2 border border-gray-600 text-sm focus:outline-none text-right font-semibold" />
+                    </div>
+                    <div className="flex gap-2">
+                      {ESTADOS.map((e) => (
+                        <button key={e.value} type="button"
+                          onClick={() => setEditFields((p) => ({ ...p, estado_pago: e.value }))}
+                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border transition"
+                          style={editFields.estado_pago === e.value
+                            ? { background: e.color, color: "#0a0a0a", borderColor: e.color }
+                            : { background: "transparent", color: e.color, borderColor: e.color + "50" }}>
+                          {e.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={handleSaveEdit}
+                        className="flex-1 py-2 rounded-lg text-xs font-bold text-gray-950 transition"
+                        style={{ background: "#00C896" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#00b085")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#00C896")}>
+                        Guardar
+                      </button>
+                      <button onClick={() => setEditingId(null)}
+                        className="flex-1 py-2 rounded-lg text-xs font-medium text-gray-400 bg-gray-700 hover:bg-gray-600 transition">
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
+              const estado = g.estado_pago || "pendiente";
+              const estadoInfo = ESTADOS.find((e) => e.value === estado) || ESTADOS[0];
+
+              return (
+                <div key={g.id} className="px-5 py-3 hover:bg-gray-800 transition">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: estadoInfo.color }} />
+                      <div className="min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{g.empresa}</p>
+                        <p className="text-gray-500 text-xs">
+                          {parseLocalDate(g.fecha).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })}
+                          {g.descripcion && <span className="ml-1 text-gray-600">— {g.descripcion}</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={badgeStyle(estado)}>
+                        {estadoInfo.label}
+                      </span>
+                      <span className="font-bold text-sm" style={{ color: "#FF6B35" }}>{formatCLP(g.monto)}</span>
+                      <button onClick={() => openEdit(g)}
+                        className="text-gray-600 hover:text-blue-400 transition p-1 rounded" title="Editar">
+                        <Pencil size={13} />
+                      </button>
+                      <button onClick={() => handleDelete(g.id)}
+                        className="text-gray-600 hover:text-red-400 transition p-1 rounded" title="Eliminar">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 flex-shrink-0 ml-3">
-                  <span className="font-bold text-sm" style={{ color: "#FF6B35" }}>{formatCLP(g.monto)}</span>
-                  <button onClick={() => handleDelete(g.id)}
-                    className="text-gray-600 hover:text-red-400 transition p-1 rounded"
-                    title="Eliminar">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

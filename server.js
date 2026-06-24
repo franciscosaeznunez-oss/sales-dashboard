@@ -54,6 +54,9 @@ async function initDB() {
       monto INTEGER NOT NULL
     )
   `);
+  await pool.query(`
+    ALTER TABLE gastos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'pendiente'
+  `);
   console.log("Tablas listas.");
 }
 
@@ -130,10 +133,19 @@ app.get("/api/gastos", async (req, res) => {
 });
 
 app.post("/api/gastos", async (req, res) => {
-  const { id, fecha, empresa, descripcion, monto } = req.body;
+  const { id, fecha, empresa, descripcion, monto, estado_pago } = req.body;
   await pool.query(
-    "INSERT INTO gastos (id, fecha, empresa, descripcion, monto) VALUES ($1,$2,$3,$4,$5)",
-    [id, fecha, empresa, descripcion ?? null, monto]
+    "INSERT INTO gastos (id, fecha, empresa, descripcion, monto, estado_pago) VALUES ($1,$2,$3,$4,$5,$6)",
+    [id, fecha, empresa, descripcion ?? null, monto, estado_pago ?? "pendiente"]
+  );
+  res.json({ ok: true });
+});
+
+app.patch("/api/gastos/:id", async (req, res) => {
+  const { fecha, empresa, descripcion, monto, estado_pago } = req.body;
+  await pool.query(
+    "UPDATE gastos SET fecha=$1, empresa=$2, descripcion=$3, monto=$4, estado_pago=$5 WHERE id=$6",
+    [fecha, empresa, descripcion ?? null, monto, estado_pago, req.params.id]
   );
   res.json({ ok: true });
 });
