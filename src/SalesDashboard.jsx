@@ -36,22 +36,15 @@ const SESSION_KEY = "ventas_session";
 
 // ─── Helpers API ───────────────────────────────────────────────────────────────
 const api = {
-  getVentas: () => fetch("/api/ventas").then((r) => r.json()),
-  postVenta: (v) =>
-    fetch("/api/ventas", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(v),
-    }),
+  getVentas:   () => fetch("/api/ventas").then((r) => r.json()),
+  postVenta:   (v) => fetch("/api/ventas",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) }),
   deleteVenta: (id) => fetch(`/api/ventas/${id}`, { method: "DELETE" }),
-  getFiados: () => fetch("/api/fiados").then((r) => r.json()),
-  postFiado: (f) =>
-    fetch("/api/fiados", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(f),
-    }),
+  getFiados:   () => fetch("/api/fiados").then((r) => r.json()),
+  postFiado:   (f) => fetch("/api/fiados",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) }),
   deleteFiado: (id) => fetch(`/api/fiados/${id}`, { method: "DELETE" }),
+  getAbonos:   () => fetch("/api/abonos").then((r) => r.json()),
+  postAbono:   (a) => fetch("/api/abonos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) }),
+  deleteAbono: (id) => fetch(`/api/abonos/${id}`, { method: "DELETE" }),
 };
 
 const DIAS_SEMANA = [
@@ -1213,13 +1206,61 @@ function SalesAnalysis({ ventas, selectedMonth, selectedYear }) {
 }
 
 // ─── FIADOS EXPRESS ───────────────────────────────────────────────────────────
-function FiadosExpress({ fiados, onSave }) {
+function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
+  // ── Form nuevo ítem ────────────────────────────────────────────────────────
   const [fecha, setFecha] = useState(todayStr());
   const [nombre, setNombre] = useState("");
+  const [descripcion, setDescripcion] = useState("");
   const [monto, setMonto] = useState("");
   const [success, setSuccess] = useState(false);
   const [errors, setErrors] = useState({});
 
+  // ── Abono inline: { nombre, monto, fecha } ─────────────────────────────────
+  const [abonoTarget, setAbonoTarget] = useState(null); // nombre del fiador
+  const [abonoMonto, setAbonoMonto] = useState("");
+  const [abonoFecha, setAbonoFecha] = useState(todayStr());
+  const [abonoError, setAbonoError] = useState("");
+  const [abonoSuccess, setAbonoSuccess] = useState("");
+
+  // Nombres de fiadores pendientes para autocomplete
+  const nombresPendientes = useMemo(() => {
+    const totDebe = {};
+    const totPago = {};
+    fiados.forEach((f) => { totDebe[f.nombre] = (totDebe[f.nombre] || 0) + f.monto; });
+    abonos.forEach((a) => { totPago[a.nombre] = (totPago[a.nombre] || 0) + a.monto; });
+    return [...new Set(fiados.map((f) => f.nombre))].filter(
+      (n) => (totDebe[n] || 0) > (totPago[n] || 0)
+    );
+  }, [fiados, abonos]);
+
+  // Agrupa fiados y abonos por nombre
+  const grupos = useMemo(() => {
+    const map = {};
+    fiados.forEach((f) => {
+      if (!map[f.nombre]) map[f.nombre] = { items: [], abonos: [] };
+      map[f.nombre].items.push(f);
+    });
+    abonos.forEach((a) => {
+      if (!map[a.nombre]) map[a.nombre] = { items: [], abonos: [] };
+      map[a.nombre].abonos.push(a);
+    });
+    // Ordena items y abonos por fecha
+    Object.values(map).forEach((g) => {
+      g.items.sort((a, b) => a.fecha.localeCompare(b.fecha));
+      g.abonos.sort((a, b) => a.fecha.localeCompare(b.fecha));
+      g.totalDebe = g.items.reduce((s, i) => s + i.monto, 0);
+      g.totalPago = g.abonos.reduce((s, a) => s + a.monto, 0);
+      g.balance = g.totalDebe - g.totalPago;
+    });
+    return map;
+  }, [fiados, abonos]);
+
+  const pendientes = Object.entries(grupos).filter(([, g]) => g.balance > 0);
+  const saldados   = Object.entries(grupos).filter(([, g]) => g.balance <= 0);
+
+  const totalGlobalPendiente = pendientes.reduce((s, [, g]) => s + g.balance, 0);
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
   const validate = () => {
     const e = {};
     if (!nombre.trim()) e.nombre = "Ingresa el nombre del cliente.";
@@ -1236,219 +1277,317 @@ function FiadosExpress({ fiados, onSave }) {
       id: Date.now().toString(),
       fecha,
       nombre: nombre.trim(),
+      descripcion: descripcion.trim() || null,
       monto: Math.round(Number(monto)),
     };
     await api.postFiado(fiado);
-    await onSave();
+    await onSaveFiado();
     setNombre("");
+    setDescripcion("");
     setMonto("");
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
   };
 
-  const handleRemove = async (id) => {
+  const handleDeleteFiado = async (id) => {
     await api.deleteFiado(id);
-    await onSave();
+    await onSaveFiado();
   };
 
-  const totalPendiente = fiados.reduce((acc, f) => acc + f.monto, 0);
+  const handleDeleteAbono = async (id) => {
+    await api.deleteAbono(id);
+    await onSaveAbono();
+  };
+
+  const handleAbono = async (nombreFiador) => {
+    const val = Number(abonoMonto);
+    if (!abonoMonto || isNaN(val) || val <= 0) {
+      setAbonoError("Ingresa un monto válido.");
+      return;
+    }
+    const abono = {
+      id: Date.now().toString(),
+      fecha: abonoFecha,
+      nombre: nombreFiador,
+      monto: Math.round(val),
+    };
+    await api.postAbono(abono);
+    await onSaveAbono();
+    setAbonoMonto("");
+    setAbonoFecha(todayStr());
+    setAbonoError("");
+    setAbonoTarget(null);
+    setAbonoSuccess(nombreFiador);
+    setTimeout(() => setAbonoSuccess(""), 3000);
+  };
+
+  const fmtFecha = (f) =>
+    parseLocalDate(f).toLocaleDateString("es-CL", { day: "2-digit", month: "short" });
 
   return (
-    <div className="max-w-lg mx-auto space-y-5">
-      {/* Card resumen */}
-      {fiados.length > 0 && (
-        <div
-          className="rounded-2xl p-5 border flex items-center justify-between"
-          style={{
-            background: "rgba(255,107,53,0.08)",
-            borderColor: "rgba(255,107,53,0.25)",
-          }}
-        >
+    <div className="max-w-2xl mx-auto space-y-5">
+
+      {/* Resumen global */}
+      {pendientes.length > 0 && (
+        <div className="rounded-2xl p-5 border flex items-center justify-between"
+          style={{ background: "rgba(255,107,53,0.08)", borderColor: "rgba(255,107,53,0.25)" }}>
           <div className="flex items-center gap-3">
             <Users size={22} style={{ color: "#FF6B35" }} />
             <div>
-              <p className="text-xs font-medium" style={{ color: "#FF6B35" }}>
-                Total fiado pendiente
-              </p>
-              <p className="text-2xl font-bold text-white tracking-tight">
-                {formatCLP(totalPendiente)}
-              </p>
+              <p className="text-xs font-medium" style={{ color: "#FF6B35" }}>Total pendiente</p>
+              <p className="text-2xl font-bold text-white tracking-tight">{formatCLP(totalGlobalPendiente)}</p>
             </div>
           </div>
           <div className="text-right">
-            <p className="text-3xl font-bold" style={{ color: "#FF6B35" }}>
-              {fiados.length}
-            </p>
-            <p className="text-xs text-gray-500">
-              {fiados.length === 1 ? "persona" : "personas"}
-            </p>
+            <p className="text-3xl font-bold" style={{ color: "#FF6B35" }}>{pendientes.length}</p>
+            <p className="text-xs text-gray-500">{pendientes.length === 1 ? "fiador" : "fiadores"}</p>
           </div>
         </div>
       )}
 
-      {/* Formulario */}
+      {/* Formulario nuevo ítem */}
       <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 shadow-xl">
-        <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+        <h2 className="text-lg font-bold text-white mb-5 flex items-center gap-2">
           <Users size={20} style={{ color: "#FF6B35" }} />
-          Registrar Fiado
+          Agregar Ítem Fiado
         </h2>
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Fecha */}
-          <div>
-            <label className="block text-gray-400 text-sm font-medium mb-2">
-              Fecha
-            </label>
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => setFecha(e.target.value)}
-              className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition"
-            />
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-gray-400 text-sm font-medium mb-1">Fecha</label>
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)}
+                className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm" />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-sm font-medium mb-1">Nombre del cliente</label>
+              <input type="text" value={nombre} list="fiadores-list"
+                onChange={(e) => { setNombre(e.target.value); setErrors((p) => ({ ...p, nombre: undefined })); }}
+                className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm"
+                style={{ borderColor: errors.nombre ? "#ef4444" : undefined }}
+                placeholder="Ej: Juan Pérez" />
+              <datalist id="fiadores-list">
+                {nombresPendientes.map((n) => <option key={n} value={n} />)}
+              </datalist>
+              {errors.nombre && <p className="text-red-400 text-xs mt-1">{errors.nombre}</p>}
+            </div>
           </div>
 
-          {/* Nombre */}
           <div>
-            <label className="block text-gray-400 text-sm font-medium mb-2">
-              Nombre del cliente
-            </label>
-            <input
-              type="text"
-              value={nombre}
-              onChange={(e) => {
-                setNombre(e.target.value);
-                setErrors((prev) => ({ ...prev, nombre: undefined }));
-              }}
-              className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition"
-              style={{ borderColor: errors.nombre ? "#ef4444" : undefined }}
-              placeholder="Ej: Juan Pérez"
-            />
-            {errors.nombre && (
-              <p className="text-red-400 text-sm mt-1">{errors.nombre}</p>
-            )}
+            <label className="block text-gray-400 text-sm font-medium mb-1">Descripción (opcional)</label>
+            <input type="text" value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value)}
+              className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm"
+              placeholder="Ej: 2 cafés, almuerzo, etc." />
           </div>
 
-          {/* Monto */}
           <div>
-            <label className="block text-gray-400 text-sm font-medium mb-2">
-              Monto fiado (CLP)
-            </label>
+            <label className="block text-gray-400 text-sm font-medium mb-1">Monto (CLP)</label>
             <div className="relative">
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold select-none">
-                $
-              </span>
-              <input
-                type="number"
-                value={monto}
-                min="1"
-                step="1"
-                onChange={(e) => {
-                  setMonto(e.target.value);
-                  setErrors((prev) => ({ ...prev, monto: undefined }));
-                }}
-                className="w-full bg-gray-800 text-white rounded-xl pl-8 pr-4 py-3 border border-gray-700 focus:outline-none transition text-right text-lg font-semibold"
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold select-none text-sm">$</span>
+              <input type="number" value={monto} min="1" step="1"
+                onChange={(e) => { setMonto(e.target.value); setErrors((p) => ({ ...p, monto: undefined })); }}
+                className="w-full bg-gray-800 text-white rounded-xl pl-7 pr-4 py-2.5 border border-gray-700 focus:outline-none text-right font-semibold text-sm"
                 style={{ borderColor: errors.monto ? "#ef4444" : undefined }}
-                placeholder="0"
-              />
+                placeholder="0" />
             </div>
             {monto > 0 && !errors.monto && (
-              <p className="text-right mt-1 text-sm font-medium" style={{ color: "#FF6B35" }}>
-                {formatCLP(monto)}
-              </p>
+              <p className="text-right mt-1 text-xs font-medium" style={{ color: "#FF6B35" }}>{formatCLP(monto)}</p>
             )}
-            {errors.monto && (
-              <p className="text-red-400 text-sm mt-1">{errors.monto}</p>
-            )}
+            {errors.monto && <p className="text-red-400 text-xs mt-1">{errors.monto}</p>}
           </div>
 
           {success && (
-            <div
-              className="flex items-center gap-2 rounded-xl p-3 border"
-              style={{ background: "rgba(0,200,150,0.1)", borderColor: "rgba(0,200,150,0.3)" }}
-            >
-              <Star size={16} style={{ color: "#00C896" }} />
-              <span className="text-sm font-medium" style={{ color: "#00C896" }}>
-                ¡Fiado registrado exitosamente!
-              </span>
+            <div className="flex items-center gap-2 rounded-xl p-3 border"
+              style={{ background: "rgba(0,200,150,0.1)", borderColor: "rgba(0,200,150,0.3)" }}>
+              <Star size={14} style={{ color: "#00C896" }} />
+              <span className="text-sm font-medium" style={{ color: "#00C896" }}>¡Ítem registrado!</span>
             </div>
           )}
 
-          <button
-            type="submit"
-            className="w-full font-bold py-3 rounded-xl transition flex items-center justify-center gap-2 text-gray-950 text-base"
+          <button type="submit"
+            className="w-full font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-gray-950 text-sm"
             style={{ background: "#FF6B35" }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "#e55a25")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "#FF6B35")}
-          >
-            <Plus size={18} />
-            Registrar Fiado
+            onMouseLeave={(e) => (e.currentTarget.style.background = "#FF6B35")}>
+            <Plus size={16} /> Agregar Ítem
           </button>
         </form>
       </div>
 
-      {/* Lista de fiados */}
-      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h3 className="text-white font-semibold text-sm">Fiados pendientes</h3>
-          <span className="text-xs text-gray-500 bg-gray-800 px-2.5 py-1 rounded-full">
-            {fiados.length} {fiados.length === 1 ? "persona" : "personas"}
-          </span>
+      {/* Fiadores pendientes */}
+      {pendientes.length === 0 && saldados.length === 0 ? (
+        <div className="bg-gray-900 rounded-2xl p-10 text-center border border-gray-800">
+          <Users size={32} className="mx-auto mb-3 opacity-30 text-gray-600" />
+          <p className="text-gray-500 text-sm">No hay fiados registrados.</p>
         </div>
+      ) : (
+        <>
+          {pendientes.length > 0 && (
+            <div className="space-y-4">
+              <h3 className="text-white font-semibold text-sm px-1">Pendientes de pago</h3>
+              {pendientes.map(([nombreFiador, g]) => {
+                const pct = Math.min(100, Math.round((g.totalPago / g.totalDebe) * 100));
+                const isAbonoOpen = abonoTarget === nombreFiador;
+                return (
+                  <div key={nombreFiador} className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
+                    {/* Header fiador */}
+                    <div className="px-5 py-4 border-b border-gray-800">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-white font-bold">{nombreFiador}</p>
+                        <p className="font-bold text-lg" style={{ color: "#FF6B35" }}>{formatCLP(g.balance)}</p>
+                      </div>
+                      {g.totalPago > 0 && (
+                        <>
+                          <div className="h-1.5 bg-gray-800 rounded-full mb-1">
+                            <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: "#00C896" }} />
+                          </div>
+                          <div className="flex justify-between text-xs text-gray-500">
+                            <span>Abonado: {formatCLP(g.totalPago)}</span>
+                            <span>Total: {formatCLP(g.totalDebe)}</span>
+                          </div>
+                        </>
+                      )}
+                    </div>
 
-        {fiados.length === 0 ? (
-          <div className="p-10 text-center text-gray-600">
-            <Users size={32} className="mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No hay fiados registrados.</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-800">
-            {fiados.map((f, idx) => (
-              <div
-                key={f.id}
-                className="px-5 py-3.5 flex items-center justify-between hover:bg-gray-800 transition"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-gray-500 text-xs w-5 text-right">{idx + 1}</span>
-                  <div>
-                    <p className="text-white text-sm font-medium">{f.nombre}</p>
-                    <p className="text-gray-600 text-xs">
-                      {parseLocalDate(f.fecha).toLocaleDateString("es-CL", {
-                        day: "2-digit",
-                        month: "short",
-                      })}
-                    </p>
+                    {/* Ítems */}
+                    <div className="divide-y divide-gray-800">
+                      {g.items.map((item) => (
+                        <div key={item.id} className="px-5 py-2.5 flex items-center justify-between">
+                          <div>
+                            <span className="text-gray-500 text-xs">{fmtFecha(item.fecha)}</span>
+                            {item.descripcion && (
+                              <span className="text-gray-400 text-xs ml-2">— {item.descripcion}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-300 text-sm font-medium">{formatCLP(item.monto)}</span>
+                            <button onClick={() => handleDeleteFiado(item.id)}
+                              className="text-gray-700 hover:text-red-400 transition p-1 rounded"
+                              title="Eliminar ítem">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Abonos registrados */}
+                    {g.abonos.length > 0 && (
+                      <div className="border-t border-gray-800 bg-gray-950">
+                        {g.abonos.map((abono) => (
+                          <div key={abono.id} className="px-5 py-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle size={13} style={{ color: "#00C896" }} />
+                              <span className="text-gray-500 text-xs">Abono {fmtFecha(abono.fecha)}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium" style={{ color: "#00C896" }}>+{formatCLP(abono.monto)}</span>
+                              <button onClick={() => handleDeleteAbono(abono.id)}
+                                className="text-gray-700 hover:text-red-400 transition p-1 rounded"
+                                title="Eliminar abono">
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Form abono inline */}
+                    {isAbonoOpen && (
+                      <div className="border-t border-gray-800 px-5 py-4 bg-gray-950 space-y-3">
+                        <p className="text-gray-300 text-sm font-medium">Registrar abono</p>
+                        <div className="flex gap-2">
+                          <input type="date" value={abonoFecha}
+                            onChange={(e) => setAbonoFecha(e.target.value)}
+                            className="bg-gray-800 text-white rounded-lg px-3 py-2 border border-gray-700 text-sm focus:outline-none" />
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">$</span>
+                            <input type="number" value={abonoMonto} min="1" step="1"
+                              onChange={(e) => { setAbonoMonto(e.target.value); setAbonoError(""); }}
+                              className="w-full bg-gray-800 text-white rounded-lg pl-6 pr-3 py-2 border border-gray-700 text-sm focus:outline-none text-right"
+                              style={{ borderColor: abonoError ? "#ef4444" : undefined }}
+                              placeholder="0" />
+                          </div>
+                          <button onClick={() => handleAbono(nombreFiador)}
+                            className="px-3 py-2 rounded-lg text-sm font-bold text-gray-950 transition"
+                            style={{ background: "#00C896" }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "#00b085")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "#00C896")}>
+                            ✓
+                          </button>
+                          <button onClick={() => { setAbonoTarget(null); setAbonoMonto(""); setAbonoError(""); }}
+                            className="px-3 py-2 rounded-lg text-sm text-gray-400 bg-gray-800 hover:bg-gray-700 transition">
+                            ✕
+                          </button>
+                        </div>
+                        {abonoError && <p className="text-red-400 text-xs">{abonoError}</p>}
+                      </div>
+                    )}
+
+                    {/* Acciones fiador */}
+                    <div className="border-t border-gray-800 px-5 py-3 flex gap-2">
+                      <button
+                        onClick={() => { setNombre(nombreFiador); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                        className="flex-1 text-xs font-medium py-2 rounded-lg transition"
+                        style={{ background: "rgba(255,107,53,0.12)", color: "#FF6B35" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.22)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.12)")}>
+                        + Agregar ítem
+                      </button>
+                      <button
+                        onClick={() => { setAbonoTarget(isAbonoOpen ? null : nombreFiador); setAbonoMonto(""); setAbonoError(""); }}
+                        className="flex-1 text-xs font-medium py-2 rounded-lg transition"
+                        style={{ background: "rgba(0,200,150,0.12)", color: "#00C896" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.22)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.12)")}>
+                        $ Registrar abono
+                      </button>
+                    </div>
+                    {abonoSuccess === nombreFiador && (
+                      <div className="px-5 pb-3">
+                        <p className="text-xs font-medium" style={{ color: "#00C896" }}>✓ Abono registrado</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Saldados */}
+          {saldados.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-gray-500 font-semibold text-sm px-1">Historial — Saldados ✓</h3>
+              {saldados.map(([nombreFiador, g]) => (
+                <div key={nombreFiador} className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden opacity-70">
+                  <div className="px-5 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle size={16} style={{ color: "#00C896" }} />
+                      <p className="text-gray-300 font-medium text-sm">{nombreFiador}</p>
+                    </div>
+                    <p className="text-gray-400 text-sm">Total: {formatCLP(g.totalDebe)}</p>
+                  </div>
+                  <div className="border-t border-gray-800 px-5 py-2 bg-gray-950">
+                    {g.abonos.map((a) => (
+                      <div key={a.id} className="flex justify-between text-xs text-gray-600 py-0.5">
+                        <span>Abono {fmtFecha(a.fecha)}</span>
+                        <div className="flex items-center gap-2">
+                          <span>{formatCLP(a.monto)}</span>
+                          <button onClick={() => handleDeleteAbono(a.id)}
+                            className="text-gray-700 hover:text-red-400 transition" title="Eliminar abono">
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className="font-bold text-sm"
-                    style={{ color: "#FF6B35" }}
-                  >
-                    {formatCLP(f.monto)}
-                  </span>
-                  <button
-                    onClick={() => handleRemove(f.id)}
-                    className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg transition"
-                    style={{ background: "rgba(0,200,150,0.12)", color: "#00C896" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.25)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.12)")}
-                    title="Marcar como pagado"
-                  >
-                    <CheckCircle size={13} />
-                    Pagar
-                  </button>
-                  <button
-                    onClick={() => handleRemove(f.id)}
-                    className="text-gray-600 hover:text-red-400 transition p-1 rounded-lg hover:bg-red-950"
-                    title="Eliminar fiado"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1458,6 +1597,7 @@ export default function SalesDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [ventas, setVentas] = useState([]);
   const [fiados, setFiados] = useState([]);
+  const [abonos, setAbonos] = useState([]);
   const [activeTab, setActiveTab] = useState("registrar");
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -1470,6 +1610,7 @@ export default function SalesDashboard() {
     }
     api.getVentas().then(setVentas);
     api.getFiados().then(setFiados);
+    api.getAbonos().then(setAbonos);
   }, []);
 
   const handleLogin = () => setIsLoggedIn(true);
@@ -1487,6 +1628,11 @@ export default function SalesDashboard() {
   const handleSaveFiado = async () => {
     const updated = await api.getFiados();
     setFiados(updated);
+  };
+
+  const handleSaveAbono = async () => {
+    const updated = await api.getAbonos();
+    setAbonos(updated);
   };
 
   const handleDelete = async (id) => {
@@ -1618,7 +1764,12 @@ export default function SalesDashboard() {
           />
         )}
         {activeTab === "fiados" && (
-          <FiadosExpress fiados={fiados} onSave={handleSaveFiado} />
+          <FiadosExpress
+            fiados={fiados}
+            abonos={abonos}
+            onSaveFiado={handleSaveFiado}
+            onSaveAbono={handleSaveAbono}
+          />
         )}
       </main>
     </div>
