@@ -9,13 +9,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.use(express.json());
 
-// ─── Conexión PostgreSQL ────────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
-// ─── Inicializar tablas ─────────────────────────────────────────────────────
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ventas (
@@ -31,13 +29,35 @@ async function initDB() {
       id TEXT PRIMARY KEY,
       fecha TEXT NOT NULL,
       nombre TEXT NOT NULL,
+      descripcion TEXT,
+      monto INTEGER NOT NULL
+    )
+  `);
+  // Migración: agregar columna descripcion si no existe
+  await pool.query(`
+    ALTER TABLE fiados ADD COLUMN IF NOT EXISTS descripcion TEXT
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS abonos (
+      id TEXT PRIMARY KEY,
+      fecha TEXT NOT NULL,
+      nombre TEXT NOT NULL,
+      monto INTEGER NOT NULL
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gastos (
+      id TEXT PRIMARY KEY,
+      fecha TEXT NOT NULL,
+      empresa TEXT NOT NULL,
+      descripcion TEXT,
       monto INTEGER NOT NULL
     )
   `);
   console.log("Tablas listas.");
 }
 
-// ─── API: Ventas ─────────────────────────────────────────────────────────────
+// ─── API: Ventas ──────────────────────────────────────────────────────────────
 app.get("/api/ventas", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM ventas ORDER BY fecha, id");
   res.json(rows.map((r) => ({
@@ -63,17 +83,17 @@ app.delete("/api/ventas/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── API: Fiados ─────────────────────────────────────────────────────────────
+// ─── API: Fiados ──────────────────────────────────────────────────────────────
 app.get("/api/fiados", async (req, res) => {
   const { rows } = await pool.query("SELECT * FROM fiados ORDER BY fecha, id");
   res.json(rows);
 });
 
 app.post("/api/fiados", async (req, res) => {
-  const { id, fecha, nombre, monto } = req.body;
+  const { id, fecha, nombre, descripcion, monto } = req.body;
   await pool.query(
-    "INSERT INTO fiados (id, fecha, nombre, monto) VALUES ($1,$2,$3,$4)",
-    [id, fecha, nombre, monto]
+    "INSERT INTO fiados (id, fecha, nombre, descripcion, monto) VALUES ($1,$2,$3,$4,$5)",
+    [id, fecha, nombre, descripcion ?? null, monto]
   );
   res.json({ ok: true });
 });
@@ -83,13 +103,53 @@ app.delete("/api/fiados/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── API: Abonos ──────────────────────────────────────────────────────────────
+app.get("/api/abonos", async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM abonos ORDER BY fecha, id");
+  res.json(rows);
+});
+
+app.post("/api/abonos", async (req, res) => {
+  const { id, fecha, nombre, monto } = req.body;
+  await pool.query(
+    "INSERT INTO abonos (id, fecha, nombre, monto) VALUES ($1,$2,$3,$4)",
+    [id, fecha, nombre, monto]
+  );
+  res.json({ ok: true });
+});
+
+app.delete("/api/abonos/:id", async (req, res) => {
+  await pool.query("DELETE FROM abonos WHERE id = $1", [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ─── API: Gastos ──────────────────────────────────────────────────────────────
+app.get("/api/gastos", async (req, res) => {
+  const { rows } = await pool.query("SELECT * FROM gastos ORDER BY fecha, id");
+  res.json(rows);
+});
+
+app.post("/api/gastos", async (req, res) => {
+  const { id, fecha, empresa, descripcion, monto } = req.body;
+  await pool.query(
+    "INSERT INTO gastos (id, fecha, empresa, descripcion, monto) VALUES ($1,$2,$3,$4,$5)",
+    [id, fecha, empresa, descripcion ?? null, monto]
+  );
+  res.json({ ok: true });
+});
+
+app.delete("/api/gastos/:id", async (req, res) => {
+  await pool.query("DELETE FROM gastos WHERE id = $1", [req.params.id]);
+  res.json({ ok: true });
+});
+
 // ─── Servir React build ───────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "dist")));
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
-// ─── Arranque ────────────────────────────────────────────────────────────────
+// ─── Arranque ─────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 initDB()
   .then(() => app.listen(PORT, () => console.log(`Servidor en puerto ${PORT}`)))

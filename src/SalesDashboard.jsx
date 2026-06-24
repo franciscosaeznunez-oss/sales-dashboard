@@ -45,6 +45,9 @@ const api = {
   getAbonos:   () => fetch("/api/abonos").then((r) => r.json()),
   postAbono:   (a) => fetch("/api/abonos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) }),
   deleteAbono: (id) => fetch(`/api/abonos/${id}`, { method: "DELETE" }),
+  getGastos:   () => fetch("/api/gastos").then((r) => r.json()),
+  postGasto:   (g) => fetch("/api/gastos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }),
+  deleteGasto: (id) => fetch(`/api/gastos/${id}`, { method: "DELETE" }),
 };
 
 const DIAS_SEMANA = [
@@ -1592,12 +1595,289 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
   );
 }
 
+// ─── GASTOS ───────────────────────────────────────────────────────────────────
+function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onYearChange, onSaveGasto }) {
+  const [fecha, setFecha] = useState(todayStr());
+  const [empresa, setEmpresa] = useState("");
+  const [descripcion, setDescripcion] = useState("");
+  const [monto, setMonto] = useState("");
+  const [errors, setErrors] = useState({});
+  const [success, setSuccess] = useState(false);
+
+  const empresasExistentes = useMemo(
+    () => [...new Set(gastos.map((g) => g.empresa))].sort(),
+    [gastos]
+  );
+
+  const gastosMes = useMemo(
+    () =>
+      gastos.filter((g) => {
+        const [y, m] = g.fecha.split("-");
+        return parseInt(y) === selectedYear && parseInt(m) === selectedMonth;
+      }),
+    [gastos, selectedMonth, selectedYear]
+  );
+
+  const totalMes = gastosMes.reduce((s, g) => s + g.monto, 0);
+  const cantidadMes = gastosMes.length;
+
+  // Agrupado por empresa para el mes
+  const porEmpresa = useMemo(() => {
+    const map = {};
+    gastosMes.forEach((g) => {
+      map[g.empresa] = (map[g.empresa] || 0) + g.monto;
+    });
+    return Object.entries(map)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [gastosMes]);
+
+  // Gasto diario del mes para gráfico de línea
+  const gastoDiario = useMemo(() => {
+    const diasEnMes = new Date(selectedYear, selectedMonth, 0).getDate();
+    return Array.from({ length: diasEnMes }, (_, i) => {
+      const d = String(i + 1).padStart(2, "0");
+      const fechaStr = `${selectedYear}-${String(selectedMonth).padStart(2, "0")}-${d}`;
+      const total = gastosMes.filter((g) => g.fecha === fechaStr).reduce((s, g) => s + g.monto, 0);
+      return { dia: i + 1, total };
+    });
+  }, [gastosMes, selectedMonth, selectedYear]);
+
+  const COLORES_GASTOS = ["#FF6B35", "#FF9F1C", "#FFBF69", "#FFE66D", "#CBF3F0", "#2EC4B6"];
+
+  const validate = () => {
+    const e = {};
+    if (!empresa.trim()) e.empresa = "Ingresa el nombre de la empresa.";
+    const val = Number(monto);
+    if (!monto || isNaN(val) || val <= 0) e.monto = "Ingresa un monto válido.";
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const handleSubmit = async (ev) => {
+    ev.preventDefault();
+    if (!validate()) return;
+    const gasto = {
+      id: Date.now().toString(),
+      fecha,
+      empresa: empresa.trim(),
+      descripcion: descripcion.trim() || null,
+      monto: Math.round(Number(monto)),
+    };
+    await api.postGasto(gasto);
+    await onSaveGasto();
+    setEmpresa("");
+    setDescripcion("");
+    setMonto("");
+    setSuccess(true);
+    setTimeout(() => setSuccess(false), 3000);
+  };
+
+  const handleDelete = async (id) => {
+    await api.deleteGasto(id);
+    await onSaveGasto();
+  };
+
+  const years = [];
+  const currentYear = new Date().getFullYear();
+  for (let y = currentYear; y >= currentYear - 2; y--) years.push(y);
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+
+      {/* Selector mes/año */}
+      <div className="flex gap-2">
+        <select value={selectedMonth} onChange={(e) => onMonthChange(Number(e.target.value))}
+          className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm flex-1">
+          {MESES_NOMBRES.map((m, i) => (
+            <option key={i + 1} value={i + 1}>{m}</option>
+          ))}
+        </select>
+        <select value={selectedYear} onChange={(e) => onYearChange(Number(e.target.value))}
+          className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm">
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {/* Cards resumen mes */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800 col-span-2">
+          <p className="text-gray-500 text-xs mb-1">Total gastos {MESES_NOMBRES[selectedMonth - 1]}</p>
+          <p className="text-2xl font-bold text-white">{formatCLP(totalMes)}</p>
+        </div>
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Facturas</p>
+          <p className="text-2xl font-bold" style={{ color: "#FF6B35" }}>{cantidadMes}</p>
+        </div>
+      </div>
+
+      {/* Formulario nuevo gasto */}
+      <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
+        <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
+          <DollarSign size={18} style={{ color: "#FF6B35" }} />
+          Registrar Gasto
+        </h2>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Fecha</label>
+              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)}
+                className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm" />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Empresa / Proveedor</label>
+              <input type="text" value={empresa} list="empresas-list"
+                onChange={(e) => { setEmpresa(e.target.value); setErrors((p) => ({ ...p, empresa: undefined })); }}
+                className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm"
+                style={{ borderColor: errors.empresa ? "#ef4444" : undefined }}
+                placeholder="Ej: Coca-Cola, CFE, etc." />
+              <datalist id="empresas-list">
+                {empresasExistentes.map((n) => <option key={n} value={n} />)}
+              </datalist>
+              {errors.empresa && <p className="text-red-400 text-xs mt-1">{errors.empresa}</p>}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-gray-400 text-xs font-medium mb-1">N° Factura / Descripción (opcional)</label>
+            <input type="text" value={descripcion} onChange={(e) => setDescripcion(e.target.value)}
+              className="w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm"
+              placeholder="Ej: Factura #0042, cuenta de luz mayo, etc." />
+          </div>
+
+          <div>
+            <label className="block text-gray-400 text-xs font-medium mb-1">Monto (CLP)</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm select-none">$</span>
+              <input type="number" value={monto} min="1" step="1"
+                onChange={(e) => { setMonto(e.target.value); setErrors((p) => ({ ...p, monto: undefined })); }}
+                className="w-full bg-gray-800 text-white rounded-xl pl-7 pr-4 py-2.5 border border-gray-700 focus:outline-none text-right font-semibold text-sm"
+                style={{ borderColor: errors.monto ? "#ef4444" : undefined }}
+                placeholder="0" />
+            </div>
+            {monto > 0 && !errors.monto && (
+              <p className="text-right mt-1 text-xs font-medium" style={{ color: "#FF6B35" }}>{formatCLP(monto)}</p>
+            )}
+            {errors.monto && <p className="text-red-400 text-xs mt-1">{errors.monto}</p>}
+          </div>
+
+          {success && (
+            <div className="flex items-center gap-2 rounded-xl p-3 border"
+              style={{ background: "rgba(0,200,150,0.1)", borderColor: "rgba(0,200,150,0.3)" }}>
+              <Star size={14} style={{ color: "#00C896" }} />
+              <span className="text-sm font-medium" style={{ color: "#00C896" }}>¡Gasto registrado!</span>
+            </div>
+          )}
+
+          <button type="submit"
+            className="w-full font-bold py-2.5 rounded-xl transition flex items-center justify-center gap-2 text-gray-950 text-sm"
+            style={{ background: "#FF6B35" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#e55a25")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "#FF6B35")}>
+            <Plus size={16} /> Registrar Gasto
+          </button>
+        </form>
+      </div>
+
+      {/* Gráficos — solo si hay datos */}
+      {gastosMes.length > 0 && (
+        <>
+          {/* Barras por empresa */}
+          {porEmpresa.length > 0 && (
+            <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+              <h3 className="text-white font-semibold text-sm mb-4">Gasto por empresa — {MESES_NOMBRES[selectedMonth - 1]}</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={porEmpresa} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} />
+                  <YAxis tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} tick={{ fill: "#9ca3af", fontSize: 10 }} width={45} />
+                  <Tooltip
+                    contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
+                    labelStyle={{ color: "#f9fafb", fontWeight: 600 }}
+                    formatter={(v) => [formatCLP(v), "Gasto"]} />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                    {porEmpresa.map((_, i) => (
+                      <Cell key={i} fill={COLORES_GASTOS[i % COLORES_GASTOS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Línea diaria */}
+          <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+            <h3 className="text-white font-semibold text-sm mb-4">Gasto diario — {MESES_NOMBRES[selectedMonth - 1]}</h3>
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={gastoDiario} margin={{ top: 0, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis dataKey="dia" tick={{ fill: "#9ca3af", fontSize: 10 }} />
+                <YAxis tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} tick={{ fill: "#9ca3af", fontSize: 10 }} width={45} />
+                <Tooltip
+                  contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
+                  labelStyle={{ color: "#f9fafb", fontWeight: 600 }}
+                  formatter={(v) => [formatCLP(v), "Gasto"]} />
+                <Line type="monotone" dataKey="total" stroke="#FF6B35" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      )}
+
+      {/* Lista de facturas del mes */}
+      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+          <h3 className="text-white font-semibold text-sm">
+            Facturas — {MESES_NOMBRES[selectedMonth - 1]} {selectedYear}
+          </h3>
+          <span className="text-xs text-gray-500 bg-gray-800 px-2.5 py-1 rounded-full">
+            {cantidadMes} {cantidadMes === 1 ? "factura" : "facturas"}
+          </span>
+        </div>
+
+        {gastosMes.length === 0 ? (
+          <div className="p-10 text-center text-gray-600">
+            <DollarSign size={32} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Sin gastos registrados este mes.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800">
+            {[...gastosMes].reverse().map((g) => (
+              <div key={g.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-800 transition">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: "#FF6B35" }} />
+                  <div className="min-w-0">
+                    <p className="text-white text-sm font-medium truncate">{g.empresa}</p>
+                    <p className="text-gray-500 text-xs">
+                      {parseLocalDate(g.fecha).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })}
+                      {g.descripcion && <span className="ml-1 text-gray-600">— {g.descripcion}</span>}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0 ml-3">
+                  <span className="font-bold text-sm" style={{ color: "#FF6B35" }}>{formatCLP(g.monto)}</span>
+                  <button onClick={() => handleDelete(g.id)}
+                    className="text-gray-600 hover:text-red-400 transition p-1 rounded"
+                    title="Eliminar">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── RAÍZ: SalesDashboard ──────────────────────────────────────────────────────
 export default function SalesDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [ventas, setVentas] = useState([]);
   const [fiados, setFiados] = useState([]);
   const [abonos, setAbonos] = useState([]);
+  const [gastos, setGastos] = useState([]);
   const [activeTab, setActiveTab] = useState("registrar");
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -1611,6 +1891,7 @@ export default function SalesDashboard() {
     api.getVentas().then(setVentas);
     api.getFiados().then(setFiados);
     api.getAbonos().then(setAbonos);
+    api.getGastos().then(setGastos);
   }, []);
 
   const handleLogin = () => setIsLoggedIn(true);
@@ -1633,6 +1914,11 @@ export default function SalesDashboard() {
   const handleSaveAbono = async () => {
     const updated = await api.getAbonos();
     setAbonos(updated);
+  };
+
+  const handleSaveGasto = async () => {
+    const updated = await api.getGastos();
+    setGastos(updated);
   };
 
   const handleDelete = async (id) => {
@@ -1673,6 +1959,7 @@ export default function SalesDashboard() {
     { id: "mensual", label: "Control Mensual", short: "Mensual", icon: "📅" },
     { id: "analisis", label: "Análisis", short: "Análisis", icon: "🏆" },
     { id: "fiados", label: "Fiados Express", short: "Fiados", icon: "🤝" },
+    { id: "gastos", label: "Gastos", short: "Gastos", icon: "🧾" },
   ];
 
   return (
@@ -1769,6 +2056,16 @@ export default function SalesDashboard() {
             abonos={abonos}
             onSaveFiado={handleSaveFiado}
             onSaveAbono={handleSaveAbono}
+          />
+        )}
+        {activeTab === "gastos" && (
+          <GastosSection
+            gastos={gastos}
+            selectedMonth={selectedMonth}
+            selectedYear={selectedYear}
+            onMonthChange={setSelectedMonth}
+            onYearChange={setSelectedYear}
+            onSaveGasto={handleSaveGasto}
           />
         )}
       </main>
