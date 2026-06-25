@@ -1648,6 +1648,21 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
     });
   }, [gastosMes, selectedMonth, selectedYear]);
 
+  const gastosPorDia = useMemo(() => {
+    const map = {};
+    gastosMes.forEach((g) => {
+      if (!map[g.fecha]) map[g.fecha] = [];
+      map[g.fecha].push(g);
+    });
+    return Object.entries(map)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([fecha, items]) => ({
+        fecha,
+        items,
+        total: items.reduce((s, g) => s + g.monto, 0),
+      }));
+  }, [gastosMes]);
+
   const COLORES_GASTOS = ["#FF6B35", "#FF9F1C", "#FFBF69", "#FFE66D", "#CBF3F0", "#2EC4B6"];
 
   const ESTADOS = [
@@ -1892,103 +1907,123 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
           </span>
         </div>
 
-        {gastosMes.length === 0 ? (
+        {gastosPorDia.length === 0 ? (
           <div className="p-10 text-center text-gray-600">
             <DollarSign size={32} className="mx-auto mb-3 opacity-30" />
             <p className="text-sm">Sin gastos registrados este mes.</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-800">
-            {[...gastosMes].reverse().map((g) => {
-              const isEditing = editingId === g.id;
-              if (isEditing) {
-                return (
-                  <div key={g.id} className="px-5 py-4 bg-gray-800 space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                      <input type="date" value={editFields.fecha}
-                        onChange={(e) => setEditFields((p) => ({ ...p, fecha: e.target.value }))}
-                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none" />
-                      <input type="text" value={editFields.empresa} list="empresas-edit-list"
-                        onChange={(e) => setEditFields((p) => ({ ...p, empresa: e.target.value }))}
-                        className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
-                        placeholder="Empresa" />
-                      <datalist id="empresas-edit-list">
-                        {empresasExistentes.map((n) => <option key={n} value={n} />)}
-                      </datalist>
-                    </div>
-                    <input type="text" value={editFields.descripcion}
-                      onChange={(e) => setEditFields((p) => ({ ...p, descripcion: e.target.value }))}
-                      className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
-                      placeholder="Descripción / N° Factura (opcional)" />
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">$</span>
-                      <input type="number" value={editFields.monto} min="1" step="1"
-                        onChange={(e) => setEditFields((p) => ({ ...p, monto: e.target.value }))}
-                        className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-4 py-2 border border-gray-600 text-sm focus:outline-none text-right font-semibold" />
-                    </div>
-                    <div className="flex gap-2">
-                      {ESTADOS.map((e) => (
-                        <button key={e.value} type="button"
-                          onClick={() => setEditFields((p) => ({ ...p, estado_pago: e.value }))}
-                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border transition"
-                          style={editFields.estado_pago === e.value
-                            ? { background: e.color, color: "#0a0a0a", borderColor: e.color }
-                            : { background: "transparent", color: e.color, borderColor: e.color + "50" }}>
-                          {e.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={handleSaveEdit}
-                        className="flex-1 py-2 rounded-lg text-xs font-bold text-gray-950 transition"
-                        style={{ background: "#00C896" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "#00b085")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "#00C896")}>
-                        Guardar
-                      </button>
-                      <button onClick={() => setEditingId(null)}
-                        className="flex-1 py-2 rounded-lg text-xs font-medium text-gray-400 bg-gray-700 hover:bg-gray-600 transition">
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              const estado = g.estado_pago || "pendiente";
-              const estadoInfo = ESTADOS.find((e) => e.value === estado) || ESTADOS[0];
-
-              return (
-                <div key={g.id} className="px-5 py-3 hover:bg-gray-800 transition">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: estadoInfo.color }} />
-                      <div className="min-w-0">
-                        <p className="text-white text-sm font-medium truncate">{g.empresa}</p>
-                        <p className="text-gray-500 text-xs">
-                          {parseLocalDate(g.fecha).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })}
-                          {g.descripcion && <span className="ml-1 text-gray-600">— {g.descripcion}</span>}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={badgeStyle(estado)}>
-                        {estadoInfo.label}
-                      </span>
-                      <span className="font-bold text-sm" style={{ color: "#FF6B35" }}>{formatCLP(g.monto)}</span>
-                      <button onClick={() => openEdit(g)}
-                        className="text-gray-600 hover:text-blue-400 transition p-1 rounded" title="Editar">
-                        <Pencil size={13} />
-                      </button>
-                      <button onClick={() => handleDelete(g.id)}
-                        className="text-gray-600 hover:text-red-400 transition p-1 rounded" title="Eliminar">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
+          <div>
+            {gastosPorDia.map(({ fecha: diaFecha, items, total: totalDia }) => (
+              <div key={diaFecha} className="border-b border-gray-800 last:border-b-0">
+                {/* Encabezado del día */}
+                <div className="px-5 py-2.5 flex items-center justify-between bg-gray-950">
+                  <span className="text-xs font-semibold text-gray-400 capitalize">
+                    {parseLocalDate(diaFecha).toLocaleDateString("es-CL", {
+                      weekday: "long",
+                      day: "2-digit",
+                      month: "short",
+                    })}
+                  </span>
+                  <span className="text-xs font-bold" style={{ color: "#FF6B35" }}>
+                    {formatCLP(totalDia)}
+                  </span>
                 </div>
-              );
-            })}
+
+                {/* Facturas del día */}
+                <div className="divide-y divide-gray-800">
+                  {items.map((g) => {
+                    const isEditing = editingId === g.id;
+                    if (isEditing) {
+                      return (
+                        <div key={g.id} className="px-5 py-4 bg-gray-800 space-y-3">
+                          <div className="grid grid-cols-2 gap-2">
+                            <input type="date" value={editFields.fecha}
+                              onChange={(e) => setEditFields((p) => ({ ...p, fecha: e.target.value }))}
+                              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none" />
+                            <input type="text" value={editFields.empresa} list="empresas-edit-list"
+                              onChange={(e) => setEditFields((p) => ({ ...p, empresa: e.target.value }))}
+                              className="bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
+                              placeholder="Empresa" />
+                            <datalist id="empresas-edit-list">
+                              {empresasExistentes.map((n) => <option key={n} value={n} />)}
+                            </datalist>
+                          </div>
+                          <input type="text" value={editFields.descripcion}
+                            onChange={(e) => setEditFields((p) => ({ ...p, descripcion: e.target.value }))}
+                            className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 border border-gray-600 text-sm focus:outline-none"
+                            placeholder="Descripción / N° Factura (opcional)" />
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">$</span>
+                            <input type="number" value={editFields.monto} min="1" step="1"
+                              onChange={(e) => setEditFields((p) => ({ ...p, monto: e.target.value }))}
+                              className="w-full bg-gray-700 text-white rounded-lg pl-7 pr-4 py-2 border border-gray-600 text-sm focus:outline-none text-right font-semibold" />
+                          </div>
+                          <div className="flex gap-2">
+                            {ESTADOS.map((e) => (
+                              <button key={e.value} type="button"
+                                onClick={() => setEditFields((p) => ({ ...p, estado_pago: e.value }))}
+                                className="flex-1 py-1.5 rounded-lg text-xs font-semibold border transition"
+                                style={editFields.estado_pago === e.value
+                                  ? { background: e.color, color: "#0a0a0a", borderColor: e.color }
+                                  : { background: "transparent", color: e.color, borderColor: e.color + "50" }}>
+                                {e.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={handleSaveEdit}
+                              className="flex-1 py-2 rounded-lg text-xs font-bold text-gray-950 transition"
+                              style={{ background: "#00C896" }}
+                              onMouseEnter={(e) => (e.currentTarget.style.background = "#00b085")}
+                              onMouseLeave={(e) => (e.currentTarget.style.background = "#00C896")}>
+                              Guardar
+                            </button>
+                            <button onClick={() => setEditingId(null)}
+                              className="flex-1 py-2 rounded-lg text-xs font-medium text-gray-400 bg-gray-700 hover:bg-gray-600 transition">
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    const estado = g.estado_pago || "pendiente";
+                    const estadoInfo = ESTADOS.find((e) => e.value === estado) || ESTADOS[0];
+
+                    return (
+                      <div key={g.id} className="px-5 py-3 hover:bg-gray-800 transition">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: estadoInfo.color }} />
+                            <div className="min-w-0">
+                              <p className="text-white text-sm font-medium truncate">{g.empresa}</p>
+                              {g.descripcion && (
+                                <p className="text-gray-600 text-xs truncate">— {g.descripcion}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={badgeStyle(estado)}>
+                              {estadoInfo.label}
+                            </span>
+                            <span className="font-bold text-sm" style={{ color: "#FF6B35" }}>{formatCLP(g.monto)}</span>
+                            <button onClick={() => openEdit(g)}
+                              className="text-gray-600 hover:text-blue-400 transition p-1 rounded" title="Editar">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => handleDelete(g.id)}
+                              className="text-gray-600 hover:text-red-400 transition p-1 rounded" title="Eliminar">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
