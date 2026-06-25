@@ -957,7 +957,7 @@ function MonthlyControl({
 }
 
 // ─── ANÁLISIS ─────────────────────────────────────────────────────────────────
-function SalesAnalysis({ ventas, selectedMonth, selectedYear }) {
+function SalesAnalysis({ ventas, gastos, selectedMonth, selectedYear }) {
   const ventasMes = useMemo(
     () =>
       ventas.filter((v) => {
@@ -1003,6 +1003,34 @@ function SalesAnalysis({ ventas, selectedMonth, selectedYear }) {
 
     return { totalMes, promedio, top3, peorDia, mejorDiaSemana };
   }, [resumenPorDia]);
+
+  // ── Nuevas métricas ──────────────────────────────────────────────────────────
+
+  const ventasMesAnterior = useMemo(() => {
+    let m = selectedMonth - 1, y = selectedYear;
+    if (m === 0) { m = 12; y -= 1; }
+    return ventas
+      .filter((v) => { const [vy, vm] = v.fecha.split("-"); return parseInt(vy) === y && parseInt(vm) === m; })
+      .reduce((s, v) => s + v.monto, 0);
+  }, [ventas, selectedMonth, selectedYear]);
+
+  const porMetodo = useMemo(() => {
+    const ef  = ventasMes.filter((v) => v.metodoPago === "Efectivo").reduce((s, v) => s + v.monto, 0);
+    const tar = ventasMes.filter((v) => v.metodoPago === "Tarjeta").reduce((s, v) => s + v.monto, 0);
+    return { efectivo: ef, tarjeta: tar, total: ef + tar };
+  }, [ventasMes]);
+
+  const porTurno = useMemo(() => {
+    const man = ventasMes.filter((v) => v.turno === "Mañana").reduce((s, v) => s + v.monto, 0);
+    const tar = ventasMes.filter((v) => v.turno === "Tarde").reduce((s, v) => s + v.monto, 0);
+    return { manana: man, tarde: tar, total: man + tar };
+  }, [ventasMes]);
+
+  const totalGastosMes = useMemo(() =>
+    (gastos || [])
+      .filter((g) => { const [y, m] = g.fecha.split("-"); return parseInt(y) === selectedYear && parseInt(m) === selectedMonth; })
+      .reduce((s, g) => s + g.monto, 0),
+  [gastos, selectedMonth, selectedYear]);
 
   if (!analysis) {
     return (
@@ -1206,6 +1234,154 @@ function SalesAnalysis({ ventas, selectedMonth, selectedYear }) {
           </div>
         </div>
       </div>
+
+      {/* ── Comparación con mes anterior ─────────────────────────────────── */}
+      {(() => {
+        const totalMesActual = analysis?.totalMes || 0;
+        const mesNombre = selectedMonth > 1 ? MESES_NOMBRES[selectedMonth - 2] : MESES_NOMBRES[11];
+        const diff = totalMesActual - ventasMesAnterior;
+        const pct = ventasMesAnterior > 0 ? Math.round((diff * 100) / ventasMesAnterior) : null;
+        const subio = diff >= 0;
+        return (
+          <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+            <div className="flex items-center gap-2 mb-4">
+              {subio ? <TrendingUp size={18} style={{ color: "#00C896" }} /> : <TrendingDown size={18} className="text-red-400" />}
+              <span className="text-white font-semibold text-sm">📅 Comparación con {mesNombre}</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-gray-500 text-xs mb-1">{mesNombre}</p>
+                <p className="text-xl font-bold text-gray-400">{ventasMesAnterior > 0 ? formatCLP(ventasMesAnterior) : "Sin datos"}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs mb-1">{MESES_NOMBRES[selectedMonth - 1]}</p>
+                <p className="text-xl font-bold text-white">{formatCLP(totalMesActual)}</p>
+              </div>
+            </div>
+            {pct !== null && (
+              <div className="mt-3 flex items-center gap-2">
+                <span className="text-sm font-bold px-2.5 py-1 rounded-full"
+                  style={{ background: subio ? "rgba(0,200,150,0.15)" : "rgba(239,68,68,0.15)", color: subio ? "#00C896" : "#ef4444" }}>
+                  {subio ? "+" : ""}{pct}%
+                </span>
+                <span className="text-gray-500 text-xs">vs mes anterior</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Efectivo vs Tarjeta ──────────────────────────────────────────── */}
+      <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+        <div className="flex items-center gap-2 mb-4">
+          <DollarSign size={18} style={{ color: "#00C896" }} />
+          <span className="text-white font-semibold text-sm">💳 Efectivo vs Tarjeta</span>
+        </div>
+        {porMetodo.total === 0 ? (
+          <p className="text-gray-600 text-sm">Sin ventas este mes.</p>
+        ) : (
+          <div className="space-y-4">
+            {[
+              { label: "Efectivo", value: porMetodo.efectivo, color: "#00C896" },
+              { label: "Tarjeta",  value: porMetodo.tarjeta,  color: "#3b82f6" },
+            ].map(({ label, value, color }) => {
+              const pct = porMetodo.total > 0 ? Math.round((value * 100) / porMetodo.total) : 0;
+              return (
+                <div key={label}>
+                  <div className="flex justify-between mb-1.5">
+                    <span className="text-gray-300 text-sm font-medium">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 text-xs">{pct}%</span>
+                      <span className="text-sm font-bold" style={{ color }}>{formatCLP(value)}</span>
+                    </div>
+                  </div>
+                  <div className="h-2 bg-gray-800 rounded-full">
+                    <div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Mañana vs Tarde ─────────────────────────────────────────────── */}
+      <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+        <div className="flex items-center gap-2 mb-4">
+          <BarChart2 size={18} style={{ color: "#F59E0B" }} />
+          <span className="text-white font-semibold text-sm">🌅 Mañana vs Tarde (Efectivo)</span>
+        </div>
+        {porTurno.total === 0 ? (
+          <p className="text-gray-600 text-sm">Sin ventas en efectivo este mes.</p>
+        ) : (
+          <div className="space-y-4">
+            {[
+              { label: "Mañana", value: porTurno.manana, color: "#F59E0B" },
+              { label: "Tarde",  value: porTurno.tarde,  color: "#6366f1" },
+            ].map(({ label, value, color }) => {
+              const pct = porTurno.total > 0 ? Math.round((value * 100) / porTurno.total) : 0;
+              return (
+                <div key={label}>
+                  <div className="flex justify-between mb-1.5">
+                    <span className="text-gray-300 text-sm font-medium">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 text-xs">{pct}%</span>
+                      <span className="text-sm font-bold" style={{ color }}>{formatCLP(value)}</span>
+                    </div>
+                  </div>
+                  <div className="h-2 bg-gray-800 rounded-full">
+                    <div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, background: color }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Utilidad neta ────────────────────────────────────────────────── */}
+      {(() => {
+        const ingresos = analysis?.totalMes || 0;
+        const utilidad = ingresos - totalGastosMes;
+        const esGanancia = utilidad >= 0;
+        return (
+          <div className="rounded-2xl p-5 border"
+            style={{ background: esGanancia ? "rgba(0,200,150,0.06)" : "rgba(239,68,68,0.06)",
+                     borderColor: esGanancia ? "rgba(0,200,150,0.2)" : "rgba(239,68,68,0.2)" }}>
+            <div className="flex items-center gap-2 mb-4">
+              {esGanancia ? <TrendingUp size={18} style={{ color: "#00C896" }} /> : <TrendingDown size={18} className="text-red-400" />}
+              <span className="text-white font-semibold text-sm">📊 Utilidad Neta del Mes</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div>
+                <p className="text-gray-500 text-xs mb-1">Ingresos</p>
+                <p className="text-lg font-bold" style={{ color: "#00C896" }}>{formatCLP(ingresos)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs mb-1">Gastos</p>
+                <p className="text-lg font-bold" style={{ color: "#FF6B35" }}>{formatCLP(totalGastosMes)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs mb-1">Utilidad</p>
+                <p className="text-lg font-bold" style={{ color: esGanancia ? "#00C896" : "#ef4444" }}>
+                  {esGanancia ? "" : "-"}{formatCLP(Math.abs(utilidad))}
+                </p>
+              </div>
+            </div>
+            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+              {ingresos > 0 && (
+                <div className="h-2 rounded-full"
+                  style={{ width: `${Math.min(100, Math.round((totalGastosMes * 100) / ingresos))}%`,
+                           background: esGanancia ? "#FF6B35" : "#ef4444" }} />
+              )}
+            </div>
+            <p className="text-gray-600 text-xs mt-1">
+              {ingresos > 0 ? `${Math.min(100, Math.round((totalGastosMes * 100) / ingresos))}% de los ingresos se fue en gastos` : "Sin ingresos este mes"}
+            </p>
+          </div>
+        );
+      })()}
+
     </div>
   );
 }
@@ -2206,6 +2382,7 @@ export default function SalesDashboard() {
         {activeTab === "analisis" && (
           <SalesAnalysis
             ventas={ventas}
+            gastos={gastos}
             selectedMonth={selectedMonth}
             selectedYear={selectedYear}
           />
