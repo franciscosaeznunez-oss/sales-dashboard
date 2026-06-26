@@ -33,29 +33,43 @@ import {
 } from "lucide-react";
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
-const SESSION_KEY = "ventas_session";
+const TOKEN_KEY = "ventas_token";
 
 // ─── Helpers API ───────────────────────────────────────────────────────────────
+const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
+const authH  = () => ({ "Authorization": `Bearer ${getToken()}` });
+const jsonH  = () => ({ "Authorization": `Bearer ${getToken()}`, "Content-Type": "application/json" });
+const jfetch = (url, opts = {}) => fetch(url, opts).then(async (r) => { const d = await r.json(); if (!r.ok) throw d; return d; });
+
 const api = {
-  getVentas:   () => fetch("/api/ventas").then((r) => r.json()),
-  postVenta:   (v) => fetch("/api/ventas",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) }),
-  deleteVenta: (id) => fetch(`/api/ventas/${id}`, { method: "DELETE" }),
-  getFiados:   () => fetch("/api/fiados").then((r) => r.json()),
-  postFiado:   (f) => fetch("/api/fiados",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(f) }),
-  deleteFiado: (id) => fetch(`/api/fiados/${id}`, { method: "DELETE" }),
-  getAbonos:   () => fetch("/api/abonos").then((r) => r.json()),
-  postAbono:   (a) => fetch("/api/abonos",  { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a) }),
-  deleteAbono: (id) => fetch(`/api/abonos/${id}`, { method: "DELETE" }),
-  getGastos:   () => fetch("/api/gastos").then((r) => r.json()),
-  postGasto:   (g) => fetch("/api/gastos",  { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }),
-  patchGasto:  (id, d) => fetch(`/api/gastos/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
-  deleteGasto: (id) => fetch(`/api/gastos/${id}`, { method: "DELETE" }),
-  getCigarrosCompras:  () => fetch("/api/cigarros/compras").then((r) => r.json()),
-  postCigarroCompra:   (d) => fetch("/api/cigarros/compras",   { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
-  deleteCigarroCompra: (id) => fetch(`/api/cigarros/compras/${id}`, { method: "DELETE" }),
-  getCigarrosVentas:   () => fetch("/api/cigarros/ventas").then((r) => r.json()),
-  postCigarroVenta:    (d) => fetch("/api/cigarros/ventas",    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
-  deleteCigarroVenta:  (id) => fetch(`/api/cigarros/ventas/${id}`, { method: "DELETE" }),
+  login:   (b) => jfetch("/api/login",    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
+  register:(b) => jfetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
+  getMe:   () => jfetch("/api/me", { headers: authH() }),
+
+  getVentas:   () => jfetch("/api/ventas", { headers: authH() }),
+  postVenta:   (v) => jfetch("/api/ventas",  { method: "POST",   headers: jsonH(), body: JSON.stringify(v) }),
+  deleteVenta: (id) => jfetch(`/api/ventas/${id}`, { method: "DELETE", headers: authH() }),
+
+  getFiados:   () => jfetch("/api/fiados", { headers: authH() }),
+  postFiado:   (f) => jfetch("/api/fiados",  { method: "POST",   headers: jsonH(), body: JSON.stringify(f) }),
+  deleteFiado: (id) => jfetch(`/api/fiados/${id}`, { method: "DELETE", headers: authH() }),
+
+  getAbonos:   () => jfetch("/api/abonos", { headers: authH() }),
+  postAbono:   (a) => jfetch("/api/abonos",  { method: "POST",   headers: jsonH(), body: JSON.stringify(a) }),
+  deleteAbono: (id) => jfetch(`/api/abonos/${id}`, { method: "DELETE", headers: authH() }),
+
+  getGastos:   () => jfetch("/api/gastos", { headers: authH() }),
+  postGasto:   (g) => jfetch("/api/gastos",  { method: "POST",   headers: jsonH(), body: JSON.stringify(g) }),
+  patchGasto:  (id, d) => jfetch(`/api/gastos/${id}`, { method: "PATCH",  headers: jsonH(), body: JSON.stringify(d) }),
+  deleteGasto: (id) => jfetch(`/api/gastos/${id}`, { method: "DELETE", headers: authH() }),
+
+  getCigarrosCompras:  () => jfetch("/api/cigarros/compras", { headers: authH() }),
+  postCigarroCompra:   (d) => jfetch("/api/cigarros/compras",  { method: "POST",   headers: jsonH(), body: JSON.stringify(d) }),
+  deleteCigarroCompra: (id) => jfetch(`/api/cigarros/compras/${id}`, { method: "DELETE", headers: authH() }),
+
+  getCigarrosVentas:   () => jfetch("/api/cigarros/ventas", { headers: authH() }),
+  postCigarroVenta:    (d) => jfetch("/api/cigarros/ventas", { method: "POST",   headers: jsonH(), body: JSON.stringify(d) }),
+  deleteCigarroVenta:  (id) => jfetch(`/api/cigarros/ventas/${id}`, { method: "DELETE", headers: authH() }),
 };
 
 const DIAS_SEMANA = [
@@ -121,109 +135,107 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
-// ─── LOGIN ─────────────────────────────────────────────────────────────────────
+// ─── LOGIN / REGISTRO ──────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
-  const [error, setError] = useState(false);
-  const [shake, setShake] = useState(false);
+  const [mode, setMode]     = useState("login"); // "login" | "register"
+  const [user, setUser]     = useState("");
+  const [pass, setPass]     = useState("");
+  const [negocio, setNegocio] = useState("");
+  const [error, setError]   = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const clearErr = () => setError("");
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (user === "admin" && pass === "ventas2025") {
-      localStorage.setItem(
-        SESSION_KEY,
-        JSON.stringify({ loggedIn: true, date: todayStr() })
-      );
-      onLogin();
-    } else {
-      setError(true);
-      setShake(true);
-      setTimeout(() => setShake(false), 500);
+    setError("");
+    if (!user.trim() || !pass.trim()) { setError("Completa todos los campos."); return; }
+    if (mode === "register" && !negocio.trim()) { setError("Ingresa el nombre del negocio."); return; }
+    setLoading(true);
+    try {
+      let data;
+      if (mode === "login") {
+        data = await api.login({ username: user.trim(), password: pass });
+      } else {
+        data = await api.register({ username: user.trim(), password: pass, negocio_nombre: negocio.trim() });
+      }
+      localStorage.setItem(TOKEN_KEY, data.token);
+      onLogin(data.negocio_nombre);
+    } catch (err) {
+      setError(err?.error || "Error de conexión. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
     }
   };
+
+  const inputCls = "w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition";
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div
-            className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4"
-            style={{ background: "rgba(0,200,150,0.15)" }}
-          >
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4"
+            style={{ background: "rgba(0,200,150,0.15)" }}>
             <BarChart2 size={40} style={{ color: "#00C896" }} />
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">
-            Control de Ventas
-          </h1>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Control de Ventas</h1>
           <p className="text-gray-500 text-sm mt-1">Dashboard Comercial Chile</p>
         </div>
 
-        {/* Card */}
-        <div
-          className={`bg-gray-900 rounded-2xl p-8 shadow-2xl border border-gray-800 ${shake ? "animate-pulse" : ""}`}
-        >
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div>
-              <label className="block text-gray-400 text-sm font-medium mb-2">
-                Usuario
-              </label>
-              <input
-                type="text"
-                value={user}
-                autoComplete="username"
-                autoFocus
-                onChange={(e) => {
-                  setUser(e.target.value);
-                  setError(false);
-                }}
-                className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition"
-                style={{ borderColor: error ? "#ef4444" : undefined }}
-                placeholder="admin"
-              />
-            </div>
+        {/* Tabs login/registro */}
+        <div className="flex bg-gray-900 rounded-xl p-1 mb-4 border border-gray-800">
+          {["login", "register"].map((m) => (
+            <button key={m} onClick={() => { setMode(m); clearErr(); }}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold transition"
+              style={mode === m ? { background: "#00C896", color: "#111" } : { color: "#9ca3af" }}>
+              {m === "login" ? "Ingresar" : "Crear cuenta"}
+            </button>
+          ))}
+        </div>
 
+        {/* Card */}
+        <div className="bg-gray-900 rounded-2xl p-8 shadow-2xl border border-gray-800">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {mode === "register" && (
+              <div>
+                <label className="block text-gray-400 text-sm font-medium mb-2">Nombre del negocio</label>
+                <input type="text" value={negocio} autoFocus={mode === "register"}
+                  onChange={(e) => { setNegocio(e.target.value); clearErr(); }}
+                  className={inputCls} placeholder="Ej: Almacén Don Pedro" />
+              </div>
+            )}
             <div>
-              <label className="block text-gray-400 text-sm font-medium mb-2">
-                Contraseña
-              </label>
-              <input
-                type="password"
-                value={pass}
-                autoComplete="current-password"
-                onChange={(e) => {
-                  setPass(e.target.value);
-                  setError(false);
-                }}
-                className="w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition"
-                style={{ borderColor: error ? "#ef4444" : undefined }}
-                placeholder="••••••••"
-              />
+              <label className="block text-gray-400 text-sm font-medium mb-2">Usuario</label>
+              <input type="text" value={user} autoComplete="username" autoFocus={mode === "login"}
+                onChange={(e) => { setUser(e.target.value); clearErr(); }}
+                className={inputCls} placeholder="tu_usuario" />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-sm font-medium mb-2">Contraseña</label>
+              <input type="password" value={pass} autoComplete={mode === "login" ? "current-password" : "new-password"}
+                onChange={(e) => { setPass(e.target.value); clearErr(); }}
+                className={inputCls} placeholder="••••••••" />
             </div>
 
             {error && (
               <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
                 <AlertCircle size={16} className="text-red-400 shrink-0" />
-                <span className="text-red-400 text-sm">
-                  Credenciales incorrectas. Intenta de nuevo.
-                </span>
+                <span className="text-red-400 text-sm">{error}</span>
               </div>
             )}
 
-            <button
-              type="submit"
-              className="w-full font-bold py-3 rounded-xl transition text-gray-950 text-base"
+            <button type="submit" disabled={loading}
+              className="w-full font-bold py-3 rounded-xl transition text-gray-950 text-base disabled:opacity-60"
               style={{ background: "#00C896" }}
-              onMouseEnter={(e) => (e.target.style.background = "#00b085")}
-              onMouseLeave={(e) => (e.target.style.background = "#00C896")}
-            >
-              Ingresar al Dashboard
+              onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = "#00b085"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "#00C896"; }}>
+              {loading ? "Cargando..." : mode === "login" ? "Ingresar al Dashboard" : "Crear cuenta"}
             </button>
           </form>
 
           <p className="text-center text-gray-600 text-xs mt-6">
-            Datos almacenados localmente en este dispositivo
+            Datos sincronizados en la nube · Accede desde cualquier dispositivo
           </p>
         </div>
       </div>
@@ -2471,36 +2483,45 @@ function CigarrosSection({ compras, ventas, selectedMonth, selectedYear, onMonth
 
 // ─── RAÍZ: SalesDashboard ──────────────────────────────────────────────────────
 export default function SalesDashboard() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [ventas, setVentas] = useState([]);
-  const [fiados, setFiados] = useState([]);
-  const [abonos, setAbonos] = useState([]);
-  const [gastos, setGastos] = useState([]);
+  const [isLoggedIn, setIsLoggedIn]   = useState(false);
+  const [negocioNombre, setNegocioNombre] = useState("");
+  const [ventas, setVentas]           = useState([]);
+  const [fiados, setFiados]           = useState([]);
+  const [abonos, setAbonos]           = useState([]);
+  const [gastos, setGastos]           = useState([]);
   const [cigarrosCompras, setCigarrosCompras] = useState([]);
   const [cigarrosVentas,  setCigarrosVentas]  = useState([]);
-  const [activeTab, setActiveTab] = useState("registrar");
+  const [activeTab, setActiveTab]     = useState("registrar");
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear());
+
+  const loadAllData = () => {
+    api.getVentas().then(setVentas).catch(() => {});
+    api.getFiados().then(setFiados).catch(() => {});
+    api.getAbonos().then(setAbonos).catch(() => {});
+    api.getGastos().then(setGastos).catch(() => {});
+    api.getCigarrosCompras().then(setCigarrosCompras).catch(() => {});
+    api.getCigarrosVentas().then(setCigarrosVentas).catch(() => {});
+  };
 
   useEffect(() => {
-    const session = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
-    if (session?.loggedIn && session?.date === todayStr()) {
-      setIsLoggedIn(true);
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      api.getMe()
+        .then((me) => { setNegocioNombre(me.negocio_nombre); setIsLoggedIn(true); loadAllData(); })
+        .catch(() => { localStorage.removeItem(TOKEN_KEY); });
     }
-    api.getVentas().then(setVentas);
-    api.getFiados().then(setFiados);
-    api.getAbonos().then(setAbonos);
-    api.getGastos().then(setGastos);
-    api.getCigarrosCompras().then(setCigarrosCompras);
-    api.getCigarrosVentas().then(setCigarrosVentas);
   }, []);
 
-  const handleLogin = () => setIsLoggedIn(true);
+  const handleLogin = (nombre) => { setNegocioNombre(nombre); setIsLoggedIn(true); loadAllData(); };
 
   const handleLogout = () => {
-    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(TOKEN_KEY);
     setIsLoggedIn(false);
+    setNegocioNombre("");
+    setVentas([]); setFiados([]); setAbonos([]); setGastos([]);
+    setCigarrosCompras([]); setCigarrosVentas([]);
   };
 
   const handleSave = async () => {
@@ -2588,7 +2609,7 @@ export default function SalesDashboard() {
               </div>
               <div>
                 <h1 className="text-white font-bold leading-none text-base">
-                  Control de Ventas
+                  {negocioNombre || "Control de Ventas"}
                 </h1>
                 <p className="text-gray-600 text-xs">Dashboard Comercial</p>
               </div>
