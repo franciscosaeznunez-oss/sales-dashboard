@@ -50,6 +50,12 @@ const api = {
   postGasto:   (g) => fetch("/api/gastos",  { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(g) }),
   patchGasto:  (id, d) => fetch(`/api/gastos/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
   deleteGasto: (id) => fetch(`/api/gastos/${id}`, { method: "DELETE" }),
+  getCigarrosCompras:  () => fetch("/api/cigarros/compras").then((r) => r.json()),
+  postCigarroCompra:   (d) => fetch("/api/cigarros/compras",   { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
+  deleteCigarroCompra: (id) => fetch(`/api/cigarros/compras/${id}`, { method: "DELETE" }),
+  getCigarrosVentas:   () => fetch("/api/cigarros/ventas").then((r) => r.json()),
+  postCigarroVenta:    (d) => fetch("/api/cigarros/ventas",    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }),
+  deleteCigarroVenta:  (id) => fetch(`/api/cigarros/ventas/${id}`, { method: "DELETE" }),
 };
 
 const DIAS_SEMANA = [
@@ -2207,6 +2213,262 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
   );
 }
 
+// ─── CIGARROS ─────────────────────────────────────────────────────────────────
+function CigarrosSection({ compras, ventas, selectedMonth, selectedYear, onMonthChange, onYearChange, onSaveCompra, onSaveVenta }) {
+  const [fechaVenta, setFechaVenta] = useState(todayStr());
+  const [montoVenta, setMontoVenta] = useState("");
+  const [errVenta, setErrVenta] = useState("");
+  const [successVenta, setSuccessVenta] = useState(false);
+
+  const [fechaCompra, setFechaCompra] = useState(todayStr());
+  const [descCompra, setDescCompra]   = useState("");
+  const [montoCompra, setMontoCompra] = useState("");
+  const [errCompra, setErrCompra]     = useState("");
+  const [successCompra, setSuccessCompra] = useState(false);
+
+  const filtrarMes = (arr) =>
+    arr.filter((x) => {
+      const [y, m] = x.fecha.split("-");
+      return parseInt(y) === selectedYear && parseInt(m) === selectedMonth;
+    });
+
+  const ventasMes  = useMemo(() => filtrarMes(ventas),  [ventas,  selectedMonth, selectedYear]);
+  const comprasMes = useMemo(() => filtrarMes(compras), [compras, selectedMonth, selectedYear]);
+
+  const totalVendido  = ventasMes.reduce((s, v) => s + v.monto, 0);
+  const totalInvertido = comprasMes.reduce((s, c) => s + c.monto, 0);
+  const ganancia = totalVendido - totalInvertido;
+
+  // Agrupa todos los registros del mes por día (ventas + compras mezcladas)
+  const porDia = useMemo(() => {
+    const map = {};
+    ventasMes.forEach((v)  => { if (!map[v.fecha]) map[v.fecha] = []; map[v.fecha].push({ ...v, tipo: "venta"  }); });
+    comprasMes.forEach((c) => { if (!map[c.fecha]) map[c.fecha] = []; map[c.fecha].push({ ...c, tipo: "compra" }); });
+    return Object.entries(map)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([fecha, items]) => ({
+        fecha,
+        items: items.sort((a, b) => a.tipo.localeCompare(b.tipo)),
+        totalVenta:  items.filter((i) => i.tipo === "venta").reduce((s, i) => s + i.monto, 0),
+        totalCompra: items.filter((i) => i.tipo === "compra").reduce((s, i) => s + i.monto, 0),
+      }));
+  }, [ventasMes, comprasMes]);
+
+  const years = [];
+  const cy = new Date().getFullYear();
+  for (let y = cy; y >= cy - 2; y--) years.push(y);
+
+  const handleVenta = async (e) => {
+    e.preventDefault();
+    const val = Number(montoVenta);
+    if (!montoVenta || isNaN(val) || val <= 0) { setErrVenta("Ingresa un monto válido."); return; }
+    await api.postCigarroVenta({ id: Date.now().toString(), fecha: fechaVenta, monto: Math.round(val) });
+    await onSaveVenta();
+    setMontoVenta(""); setErrVenta(""); setSuccessVenta(true);
+    setTimeout(() => setSuccessVenta(false), 3000);
+  };
+
+  const handleCompra = async (e) => {
+    e.preventDefault();
+    const val = Number(montoCompra);
+    if (!montoCompra || isNaN(val) || val <= 0) { setErrCompra("Ingresa un monto válido."); return; }
+    await api.postCigarroCompra({ id: Date.now().toString(), fecha: fechaCompra, descripcion: descCompra.trim() || null, monto: Math.round(val) });
+    await onSaveCompra();
+    setMontoCompra(""); setDescCompra(""); setErrCompra(""); setSuccessCompra(true);
+    setTimeout(() => setSuccessCompra(false), 3000);
+  };
+
+  const inputCls = "w-full bg-gray-800 text-white rounded-xl px-3 py-2.5 border border-gray-700 focus:outline-none text-sm";
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-5">
+
+      {/* Selector mes/año */}
+      <div className="flex gap-2">
+        <select value={selectedMonth} onChange={(e) => onMonthChange(Number(e.target.value))}
+          className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm flex-1">
+          {MESES_NOMBRES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+        </select>
+        <select value={selectedYear} onChange={(e) => onYearChange(Number(e.target.value))}
+          className="bg-gray-900 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm">
+          {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      </div>
+
+      {/* Cards resumen */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Vendido</p>
+          <p className="text-xl font-bold" style={{ color: "#00C896" }}>{formatCLP(totalVendido)}</p>
+        </div>
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Invertido</p>
+          <p className="text-xl font-bold" style={{ color: "#FF6B35" }}>{formatCLP(totalInvertido)}</p>
+        </div>
+        <div className="bg-gray-900 rounded-2xl p-4 border border-gray-800">
+          <p className="text-gray-500 text-xs mb-1">Ganancia</p>
+          <p className="text-xl font-bold" style={{ color: ganancia >= 0 ? "#00C896" : "#ef4444" }}>
+            {ganancia >= 0 ? "" : "-"}{formatCLP(Math.abs(ganancia))}
+          </p>
+        </div>
+      </div>
+
+      {/* Formularios */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+        {/* Venta del día */}
+        <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+          <h3 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <TrendingUp size={16} style={{ color: "#00C896" }} />
+            Venta del día
+          </h3>
+          <form onSubmit={handleVenta} className="space-y-3">
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Fecha</label>
+              <input type="date" value={fechaVenta} onChange={(e) => setFechaVenta(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Total vendido (CLP)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">$</span>
+                <input type="number" value={montoVenta} min="1" step="1"
+                  onChange={(e) => { setMontoVenta(e.target.value); setErrVenta(""); }}
+                  className="w-full bg-gray-800 text-white rounded-xl pl-7 pr-4 py-2.5 border border-gray-700 focus:outline-none text-right font-semibold text-sm"
+                  style={{ borderColor: errVenta ? "#ef4444" : undefined }}
+                  placeholder="0" />
+              </div>
+              {montoVenta > 0 && !errVenta && (
+                <p className="text-right text-xs mt-1 font-medium" style={{ color: "#00C896" }}>{formatCLP(montoVenta)}</p>
+              )}
+              {errVenta && <p className="text-red-400 text-xs mt-1">{errVenta}</p>}
+            </div>
+            {successVenta && (
+              <p className="text-xs font-medium" style={{ color: "#00C896" }}>✓ Venta registrada</p>
+            )}
+            <button type="submit"
+              className="w-full font-bold py-2.5 rounded-xl text-sm text-gray-950 transition"
+              style={{ background: "#00C896" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#00b085")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#00C896")}>
+              Registrar Venta
+            </button>
+          </form>
+        </div>
+
+        {/* Compra de cartón */}
+        <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+          <h3 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+            <ShoppingBag size={16} style={{ color: "#FF6B35" }} />
+            Compra de cartón
+          </h3>
+          <form onSubmit={handleCompra} className="space-y-3">
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Fecha</label>
+              <input type="date" value={fechaCompra} onChange={(e) => setFechaCompra(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Marca / Descripción (opcional)</label>
+              <input type="text" value={descCompra} onChange={(e) => setDescCompra(e.target.value)}
+                className={inputCls} placeholder="Ej: Marlboro, L&M..." />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1">Monto pagado (CLP)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-bold text-sm">$</span>
+                <input type="number" value={montoCompra} min="1" step="1"
+                  onChange={(e) => { setMontoCompra(e.target.value); setErrCompra(""); }}
+                  className="w-full bg-gray-800 text-white rounded-xl pl-7 pr-4 py-2.5 border border-gray-700 focus:outline-none text-right font-semibold text-sm"
+                  style={{ borderColor: errCompra ? "#ef4444" : undefined }}
+                  placeholder="0" />
+              </div>
+              {montoCompra > 0 && !errCompra && (
+                <p className="text-right text-xs mt-1 font-medium" style={{ color: "#FF6B35" }}>{formatCLP(montoCompra)}</p>
+              )}
+              {errCompra && <p className="text-red-400 text-xs mt-1">{errCompra}</p>}
+            </div>
+            {successCompra && (
+              <p className="text-xs font-medium" style={{ color: "#00C896" }}>✓ Compra registrada</p>
+            )}
+            <button type="submit"
+              className="w-full font-bold py-2.5 rounded-xl text-sm text-gray-950 transition"
+              style={{ background: "#FF6B35" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#e55a25")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#FF6B35")}>
+              Registrar Compra
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Lista por día */}
+      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800">
+          <h3 className="text-white font-semibold text-sm">
+            Registros — {MESES_NOMBRES[selectedMonth - 1]} {selectedYear}
+          </h3>
+        </div>
+
+        {porDia.length === 0 ? (
+          <div className="p-10 text-center text-gray-600">
+            <ShoppingBag size={32} className="mx-auto mb-3 opacity-30" />
+            <p className="text-sm">Sin registros este mes.</p>
+          </div>
+        ) : (
+          <div>
+            {porDia.map(({ fecha, items, totalVenta, totalCompra }) => (
+              <div key={fecha} className="border-b border-gray-800 last:border-b-0">
+                {/* Encabezado del día */}
+                <div className="px-5 py-2.5 flex items-center justify-between bg-gray-950">
+                  <span className="text-xs font-semibold text-gray-400 capitalize">
+                    {parseLocalDate(fecha).toLocaleDateString("es-CL", { weekday: "long", day: "2-digit", month: "short" })}
+                  </span>
+                  <div className="flex items-center gap-3 text-xs font-bold">
+                    {totalVenta > 0  && <span style={{ color: "#00C896" }}>▲ {formatCLP(totalVenta)}</span>}
+                    {totalCompra > 0 && <span style={{ color: "#FF6B35" }}>▼ {formatCLP(totalCompra)}</span>}
+                  </div>
+                </div>
+                {/* Ítems del día */}
+                <div className="divide-y divide-gray-800">
+                  {items.map((item) => (
+                    <div key={item.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-800 transition">
+                      <div className="flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ background: item.tipo === "venta" ? "#00C896" : "#FF6B35" }} />
+                        <div>
+                          <p className="text-white text-sm font-medium">
+                            {item.tipo === "venta" ? "Venta del día" : "Compra de cartón"}
+                          </p>
+                          {item.descripcion && (
+                            <p className="text-gray-500 text-xs">{item.descripcion}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm"
+                          style={{ color: item.tipo === "venta" ? "#00C896" : "#FF6B35" }}>
+                          {formatCLP(item.monto)}
+                        </span>
+                        <button
+                          onClick={async () => {
+                            if (item.tipo === "venta") { await api.deleteCigarroVenta(item.id); await onSaveVenta(); }
+                            else { await api.deleteCigarroCompra(item.id); await onSaveCompra(); }
+                          }}
+                          className="text-gray-600 hover:text-red-400 transition p-1 rounded" title="Eliminar">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── RAÍZ: SalesDashboard ──────────────────────────────────────────────────────
 export default function SalesDashboard() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -2214,6 +2476,8 @@ export default function SalesDashboard() {
   const [fiados, setFiados] = useState([]);
   const [abonos, setAbonos] = useState([]);
   const [gastos, setGastos] = useState([]);
+  const [cigarrosCompras, setCigarrosCompras] = useState([]);
+  const [cigarrosVentas,  setCigarrosVentas]  = useState([]);
   const [activeTab, setActiveTab] = useState("registrar");
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -2228,6 +2492,8 @@ export default function SalesDashboard() {
     api.getFiados().then(setFiados);
     api.getAbonos().then(setAbonos);
     api.getGastos().then(setGastos);
+    api.getCigarrosCompras().then(setCigarrosCompras);
+    api.getCigarrosVentas().then(setCigarrosVentas);
   }, []);
 
   const handleLogin = () => setIsLoggedIn(true);
@@ -2255,6 +2521,14 @@ export default function SalesDashboard() {
   const handleSaveGasto = async () => {
     const updated = await api.getGastos();
     setGastos(updated);
+  };
+
+  const handleSaveCigarroCompra = async () => {
+    setCigarrosCompras(await api.getCigarrosCompras());
+  };
+
+  const handleSaveCigarroVenta = async () => {
+    setCigarrosVentas(await api.getCigarrosVentas());
   };
 
   const handleDelete = async (id) => {
@@ -2296,6 +2570,7 @@ export default function SalesDashboard() {
     { id: "analisis", label: "Análisis", short: "Análisis", icon: "🏆" },
     { id: "fiados", label: "Fiados Express", short: "Fiados", icon: "🤝" },
     { id: "gastos", label: "Gastos", short: "Gastos", icon: "🧾" },
+    { id: "cigarros", label: "Cigarros", short: "Cigarros", icon: "🚬" },
   ];
 
   return (
@@ -2403,6 +2678,18 @@ export default function SalesDashboard() {
             onMonthChange={setSelectedMonth}
             onYearChange={setSelectedYear}
             onSaveGasto={handleSaveGasto}
+          />
+        )}
+        {activeTab === "cigarros" && (
+          <CigarrosSection
+            compras={cigarrosCompras}
+            ventas={cigarrosVentas}
+            selectedMonth={selectedMonth}
+            selectedYear={selectedYear}
+            onMonthChange={setSelectedMonth}
+            onYearChange={setSelectedYear}
+            onSaveCompra={handleSaveCigarroCompra}
+            onSaveVenta={handleSaveCigarroVenta}
           />
         )}
       </main>
