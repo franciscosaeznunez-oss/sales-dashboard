@@ -171,7 +171,7 @@ app.post("/api/forgot-password", async (req, res) => {
     );
     const link = `${APP_URL}?reset=${token}`;
     await resend.emails.send({
-      from: "Control de Ventas <onboarding@resend.dev>",
+      from: "Control de Ventas <noreply@marketcontrolventas.site>",
       to: email.trim().toLowerCase(),
       subject: "Recupera tu contraseña — Control de Ventas",
       html: `
