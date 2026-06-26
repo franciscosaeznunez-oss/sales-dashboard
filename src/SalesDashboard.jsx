@@ -985,7 +985,7 @@ function SalesAnalysis({ ventas, gastos, selectedMonth, selectedYear }) {
     const promedio = Math.round(totalMes / resumenPorDia.length);
 
     const sorted = [...resumenPorDia].sort((a, b) => b.total - a.total);
-    const top3 = sorted.slice(0, 3);
+    const top3 = sorted.slice(0, 8);
     const peorDia = sorted[sorted.length - 1];
 
     const porDiaSemana = {};
@@ -1055,7 +1055,7 @@ function SalesAnalysis({ ventas, gastos, selectedMonth, selectedYear }) {
       month: "long",
     });
 
-  const medals = ["🥇", "🥈", "🥉"];
+  const medals = ["🥇", "🥈", "🥉", "4°", "5°", "6°", "7°", "8°"];
 
   return (
     <div className="space-y-5">
