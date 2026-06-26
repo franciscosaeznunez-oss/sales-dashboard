@@ -20,7 +20,7 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_in_production";
 const APP_URL    = process.env.APP_URL    || "http://localhost:5173";
-const resend     = new Resend(process.env.RESEND_API_KEY || "");
+const resend     = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 async function initDB() {
   await pool.query(`
@@ -163,7 +163,7 @@ app.post("/api/forgot-password", async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: "Falta el email" });
   const { rows } = await pool.query("SELECT id, negocio_nombre FROM usuarios WHERE email=$1", [email.trim().toLowerCase()]);
-  if (rows.length) {
+  if (rows.length && resend) {
     const token = crypto.randomBytes(32).toString("hex");
     await pool.query(
       "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1,$2, NOW() + INTERVAL '1 hour')",
