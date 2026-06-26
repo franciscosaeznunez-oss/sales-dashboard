@@ -42,9 +42,12 @@ const jsonH  = () => ({ "Authorization": `Bearer ${getToken()}`, "Content-Type":
 const jfetch = (url, opts = {}) => fetch(url, opts).then(async (r) => { const d = await r.json(); if (!r.ok) throw d; return d; });
 
 const api = {
-  login:   (b) => jfetch("/api/login",    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
-  register:(b) => jfetch("/api/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
-  getMe:   () => jfetch("/api/me", { headers: authH() }),
+  login:          (b) => jfetch("/api/login",           { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
+  register:       (b) => jfetch("/api/register",        { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
+  getMe:          () => jfetch("/api/me",               { headers: authH() }),
+  changePassword: (b) => jfetch("/api/me/password",    { method: "PATCH", headers: jsonH(), body: JSON.stringify(b) }),
+  forgotPassword: (b) => jfetch("/api/forgot-password",{ method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
+  resetPassword:  (b) => jfetch("/api/reset-password", { method: "POST",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
 
   getVentas:   () => jfetch("/api/ventas", { headers: authH() }),
   postVenta:   (v) => jfetch("/api/ventas",  { method: "POST",   headers: jsonH(), body: JSON.stringify(v) }),
@@ -135,20 +138,211 @@ const CustomTooltip = ({ active, payload, label }) => {
   );
 };
 
+// ─── RESET PASSWORD SCREEN ─────────────────────────────────────────────────────
+function ResetPasswordScreen({ token, onDone }) {
+  const [pass, setPass]       = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError]     = useState("");
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (pass.length < 6) { setError("La contraseña debe tener al menos 6 caracteres."); return; }
+    if (pass !== confirm) { setError("Las contraseñas no coinciden."); return; }
+    setLoading(true);
+    try {
+      await api.resetPassword({ token, new_password: pass });
+      setSuccess(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    } catch (err) {
+      setError(err?.error || "El link es inválido o ya expiró.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputCls = "w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition";
+
+  return (
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4"
+            style={{ background: "rgba(0,200,150,0.15)" }}>
+            <BarChart2 size={40} style={{ color: "#00C896" }} />
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Nueva contraseña</h1>
+          <p className="text-gray-500 text-sm mt-1">Control de Ventas</p>
+        </div>
+        <div className="bg-gray-900 rounded-2xl p-8 shadow-2xl border border-gray-800">
+          {success ? (
+            <div className="text-center space-y-4">
+              <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center"
+                style={{ background: "rgba(0,200,150,0.15)" }}>
+                <CheckCircle size={28} style={{ color: "#00C896" }} />
+              </div>
+              <p className="text-white font-semibold">¡Contraseña actualizada!</p>
+              <p className="text-gray-500 text-sm">Ya puedes iniciar sesión con tu nueva contraseña.</p>
+              <button onClick={onDone}
+                className="w-full font-bold py-3 rounded-xl text-gray-950"
+                style={{ background: "#00C896" }}>
+                Ir al inicio de sesión
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-gray-400 text-sm font-medium mb-2">Nueva contraseña</label>
+                <input type="password" value={pass} autoFocus autoComplete="new-password"
+                  onChange={(e) => { setPass(e.target.value); setError(""); }}
+                  className={inputCls} placeholder="Mínimo 6 caracteres" />
+              </div>
+              <div>
+                <label className="block text-gray-400 text-sm font-medium mb-2">Confirmar contraseña</label>
+                <input type="password" value={confirm} autoComplete="new-password"
+                  onChange={(e) => { setConfirm(e.target.value); setError(""); }}
+                  className={inputCls} placeholder="••••••••" />
+              </div>
+              {error && (
+                <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
+                  <AlertCircle size={16} className="text-red-400 shrink-0" />
+                  <span className="text-red-400 text-sm">{error}</span>
+                </div>
+              )}
+              <button type="submit" disabled={loading}
+                className="w-full font-bold py-3 rounded-xl text-gray-950 disabled:opacity-60"
+                style={{ background: "#00C896" }}>
+                {loading ? "Guardando..." : "Guardar nueva contraseña"}
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CAMBIAR CONTRASEÑA MODAL ──────────────────────────────────────────────────
+function ChangePasswordModal({ onClose }) {
+  const [current, setCurrent]   = useState("");
+  const [newPass, setNewPass]   = useState("");
+  const [confirm, setConfirm]   = useState("");
+  const [error, setError]       = useState("");
+  const [success, setSuccess]   = useState(false);
+  const [loading, setLoading]   = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    if (!current || !newPass || !confirm) { setError("Completa todos los campos."); return; }
+    if (newPass.length < 6) { setError("La nueva contraseña debe tener al menos 6 caracteres."); return; }
+    if (newPass !== confirm) { setError("Las contraseñas nuevas no coinciden."); return; }
+    setLoading(true);
+    try {
+      await api.changePassword({ current_password: current, new_password: newPass });
+      setSuccess(true);
+    } catch (err) {
+      setError(err?.error || "Error al cambiar la contraseña.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inputCls = "w-full bg-gray-800 text-white rounded-xl px-4 py-3 border border-gray-700 focus:outline-none transition text-sm";
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-gray-900 rounded-2xl border border-gray-800 shadow-2xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-white font-bold text-base">Cambiar contraseña</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-white transition text-xl leading-none">×</button>
+        </div>
+
+        {success ? (
+          <div className="text-center py-4 space-y-3">
+            <div className="w-12 h-12 rounded-full mx-auto flex items-center justify-center"
+              style={{ background: "rgba(0,200,150,0.15)" }}>
+              <CheckCircle size={24} style={{ color: "#00C896" }} />
+            </div>
+            <p className="text-white font-semibold text-sm">¡Contraseña actualizada!</p>
+            <button onClick={onClose}
+              className="w-full font-bold py-2.5 rounded-xl text-gray-950 text-sm"
+              style={{ background: "#00C896" }}>
+              Cerrar
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1.5">Contraseña actual</label>
+              <input type="password" value={current} autoFocus autoComplete="current-password"
+                onChange={(e) => { setCurrent(e.target.value); setError(""); }}
+                className={inputCls} placeholder="••••••••" />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1.5">Nueva contraseña</label>
+              <input type="password" value={newPass} autoComplete="new-password"
+                onChange={(e) => { setNewPass(e.target.value); setError(""); }}
+                className={inputCls} placeholder="Mínimo 6 caracteres" />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs font-medium mb-1.5">Confirmar nueva contraseña</label>
+              <input type="password" value={confirm} autoComplete="new-password"
+                onChange={(e) => { setConfirm(e.target.value); setError(""); }}
+                className={inputCls} placeholder="••••••••" />
+            </div>
+            {error && (
+              <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
+                <AlertCircle size={14} className="text-red-400 shrink-0" />
+                <span className="text-red-400 text-xs">{error}</span>
+              </div>
+            )}
+            <button type="submit" disabled={loading}
+              className="w-full font-bold py-2.5 rounded-xl text-gray-950 text-sm disabled:opacity-60"
+              style={{ background: "#00C896" }}>
+              {loading ? "Guardando..." : "Guardar cambios"}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── LOGIN / REGISTRO ──────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode]     = useState("login"); // "login" | "register"
-  const [user, setUser]     = useState("");
-  const [pass, setPass]     = useState("");
+  const [mode, setMode]       = useState("login"); // "login" | "register" | "forgot"
+  const [user, setUser]       = useState("");
+  const [pass, setPass]       = useState("");
   const [negocio, setNegocio] = useState("");
-  const [error, setError]   = useState("");
+  const [email, setEmail]     = useState("");
+  const [error, setError]     = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   const clearErr = () => setError("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+
+    if (mode === "forgot") {
+      if (!email.trim()) { setError("Ingresa tu email."); return; }
+      setLoading(true);
+      try {
+        await api.forgotPassword({ email: email.trim() });
+        setForgotSent(true);
+      } catch {
+        setForgotSent(true); // no revelar si el email existe
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!user.trim() || !pass.trim()) { setError("Completa todos los campos."); return; }
     if (mode === "register" && !negocio.trim()) { setError("Ingresa el nombre del negocio."); return; }
     setLoading(true);
@@ -157,7 +351,7 @@ function LoginScreen({ onLogin }) {
       if (mode === "login") {
         data = await api.login({ username: user.trim(), password: pass });
       } else {
-        data = await api.register({ username: user.trim(), password: pass, negocio_nombre: negocio.trim() });
+        data = await api.register({ username: user.trim(), password: pass, negocio_nombre: negocio.trim(), email: email.trim() || undefined });
       }
       localStorage.setItem(TOKEN_KEY, data.token);
       onLogin(data.negocio_nombre);
@@ -183,60 +377,134 @@ function LoginScreen({ onLogin }) {
           <p className="text-gray-500 text-sm mt-1">Dashboard Comercial Chile</p>
         </div>
 
-        {/* Tabs login/registro */}
-        <div className="flex bg-gray-900 rounded-xl p-1 mb-4 border border-gray-800">
-          {["login", "register"].map((m) => (
-            <button key={m} onClick={() => { setMode(m); clearErr(); }}
-              className="flex-1 py-2 rounded-lg text-sm font-semibold transition"
-              style={mode === m ? { background: "#00C896", color: "#111" } : { color: "#9ca3af" }}>
-              {m === "login" ? "Ingresar" : "Crear cuenta"}
-            </button>
-          ))}
-        </div>
+        {/* Tabs login/registro (ocultos en modo forgot) */}
+        {mode !== "forgot" && (
+          <div className="flex bg-gray-900 rounded-xl p-1 mb-4 border border-gray-800">
+            {["login", "register"].map((m) => (
+              <button key={m} onClick={() => { setMode(m); clearErr(); setForgotSent(false); }}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold transition"
+                style={mode === m ? { background: "#00C896", color: "#111" } : { color: "#9ca3af" }}>
+                {m === "login" ? "Ingresar" : "Crear cuenta"}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Card */}
         <div className="bg-gray-900 rounded-2xl p-8 shadow-2xl border border-gray-800">
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {mode === "register" && (
-              <div>
-                <label className="block text-gray-400 text-sm font-medium mb-2">Nombre del negocio</label>
-                <input type="text" value={negocio} autoFocus={mode === "register"}
-                  onChange={(e) => { setNegocio(e.target.value); clearErr(); }}
-                  className={inputCls} placeholder="Ej: Almacén Don Pedro" />
+
+          {/* Modo: olvidé contraseña */}
+          {mode === "forgot" ? (
+            forgotSent ? (
+              <div className="text-center space-y-4">
+                <div className="w-14 h-14 rounded-full mx-auto flex items-center justify-center"
+                  style={{ background: "rgba(0,200,150,0.15)" }}>
+                  <CheckCircle size={28} style={{ color: "#00C896" }} />
+                </div>
+                <p className="text-white font-semibold">¡Revisa tu email!</p>
+                <p className="text-gray-500 text-sm">Si ese email está registrado, recibirás un link para restablecer tu contraseña en unos minutos.</p>
+                <button onClick={() => { setMode("login"); setForgotSent(false); setEmail(""); }}
+                  className="w-full font-bold py-3 rounded-xl text-gray-950"
+                  style={{ background: "#00C896" }}>
+                  Volver al inicio de sesión
+                </button>
               </div>
-            )}
-            <div>
-              <label className="block text-gray-400 text-sm font-medium mb-2">Usuario</label>
-              <input type="text" value={user} autoComplete="username" autoFocus={mode === "login"}
-                onChange={(e) => { setUser(e.target.value); clearErr(); }}
-                className={inputCls} placeholder="tu_usuario" />
-            </div>
-            <div>
-              <label className="block text-gray-400 text-sm font-medium mb-2">Contraseña</label>
-              <input type="password" value={pass} autoComplete={mode === "login" ? "current-password" : "new-password"}
-                onChange={(e) => { setPass(e.target.value); clearErr(); }}
-                className={inputCls} placeholder="••••••••" />
-            </div>
+            ) : (
+              <>
+                <div className="mb-5">
+                  <button onClick={() => { setMode("login"); clearErr(); }}
+                    className="text-gray-500 hover:text-white text-sm transition flex items-center gap-1">
+                    ← Volver
+                  </button>
+                  <h2 className="text-white font-bold text-lg mt-3">¿Olvidaste tu contraseña?</h2>
+                  <p className="text-gray-500 text-sm mt-1">Ingresa tu email y te enviaremos un link para restablecerla.</p>
+                </div>
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  <div>
+                    <label className="block text-gray-400 text-sm font-medium mb-2">Email</label>
+                    <input type="email" value={email} autoFocus
+                      onChange={(e) => { setEmail(e.target.value); clearErr(); }}
+                      className={inputCls} placeholder="tu@email.com" />
+                  </div>
+                  {error && (
+                    <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
+                      <AlertCircle size={16} className="text-red-400 shrink-0" />
+                      <span className="text-red-400 text-sm">{error}</span>
+                    </div>
+                  )}
+                  <button type="submit" disabled={loading}
+                    className="w-full font-bold py-3 rounded-xl text-gray-950 disabled:opacity-60"
+                    style={{ background: "#00C896" }}>
+                    {loading ? "Enviando..." : "Enviar instrucciones"}
+                  </button>
+                </form>
+              </>
+            )
+          ) : (
+            /* Modo: login / registro */
+            <>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                {mode === "register" && (
+                  <div>
+                    <label className="block text-gray-400 text-sm font-medium mb-2">Nombre del negocio</label>
+                    <input type="text" value={negocio} autoFocus={mode === "register"}
+                      onChange={(e) => { setNegocio(e.target.value); clearErr(); }}
+                      className={inputCls} placeholder="Ej: Almacén Don Pedro" />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-gray-400 text-sm font-medium mb-2">Usuario</label>
+                  <input type="text" value={user} autoComplete="username" autoFocus={mode === "login"}
+                    onChange={(e) => { setUser(e.target.value); clearErr(); }}
+                    className={inputCls} placeholder="tu_usuario" />
+                </div>
+                {mode === "register" && (
+                  <div>
+                    <label className="block text-gray-400 text-sm font-medium mb-2">Email <span className="text-gray-600">(para recuperar contraseña)</span></label>
+                    <input type="email" value={email}
+                      onChange={(e) => { setEmail(e.target.value); clearErr(); }}
+                      className={inputCls} placeholder="tu@email.com" />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-gray-400 text-sm font-medium mb-2">Contraseña</label>
+                  <input type="password" value={pass} autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    onChange={(e) => { setPass(e.target.value); clearErr(); }}
+                    className={inputCls} placeholder="••••••••" />
+                </div>
 
-            {error && (
-              <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
-                <AlertCircle size={16} className="text-red-400 shrink-0" />
-                <span className="text-red-400 text-sm">{error}</span>
-              </div>
-            )}
+                {error && (
+                  <div className="flex items-center gap-2 bg-red-950 border border-red-800 rounded-xl p-3">
+                    <AlertCircle size={16} className="text-red-400 shrink-0" />
+                    <span className="text-red-400 text-sm">{error}</span>
+                  </div>
+                )}
 
-            <button type="submit" disabled={loading}
-              className="w-full font-bold py-3 rounded-xl transition text-gray-950 text-base disabled:opacity-60"
-              style={{ background: "#00C896" }}
-              onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = "#00b085"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "#00C896"; }}>
-              {loading ? "Cargando..." : mode === "login" ? "Ingresar al Dashboard" : "Crear cuenta"}
-            </button>
-          </form>
+                <button type="submit" disabled={loading}
+                  className="w-full font-bold py-3 rounded-xl transition text-gray-950 text-base disabled:opacity-60"
+                  style={{ background: "#00C896" }}
+                  onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = "#00b085"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "#00C896"; }}>
+                  {loading ? "Cargando..." : mode === "login" ? "Ingresar al Dashboard" : "Crear cuenta"}
+                </button>
+              </form>
 
-          <p className="text-center text-gray-600 text-xs mt-6">
-            Datos sincronizados en la nube · Accede desde cualquier dispositivo
-          </p>
+              {mode === "login" && (
+                <div className="text-center mt-4">
+                  <button onClick={() => { setMode("forgot"); clearErr(); setEmail(""); }}
+                    className="text-gray-500 hover:text-gray-300 text-sm transition underline underline-offset-2">
+                    ¿Olvidaste tu contraseña?
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {mode !== "forgot" && (
+            <p className="text-center text-gray-600 text-xs mt-6">
+              Datos sincronizados en la nube · Accede desde cualquier dispositivo
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -2485,6 +2753,8 @@ function CigarrosSection({ compras, ventas, selectedMonth, selectedYear, onMonth
 export default function SalesDashboard() {
   const [isLoggedIn, setIsLoggedIn]   = useState(false);
   const [negocioNombre, setNegocioNombre] = useState("");
+  const [resetToken, setResetToken]   = useState(null);
+  const [showChangePwd, setShowChangePwd] = useState(false);
   const [ventas, setVentas]           = useState([]);
   const [fiados, setFiados]           = useState([]);
   const [abonos, setAbonos]           = useState([]);
@@ -2506,6 +2776,11 @@ export default function SalesDashboard() {
   };
 
   useEffect(() => {
+    // Detectar token de reset en la URL
+    const params = new URLSearchParams(window.location.search);
+    const rt = params.get("reset");
+    if (rt) { setResetToken(rt); return; }
+
     const token = localStorage.getItem(TOKEN_KEY);
     if (token) {
       api.getMe()
@@ -2582,6 +2857,7 @@ export default function SalesDashboard() {
     URL.revokeObjectURL(url);
   };
 
+  if (resetToken) return <ResetPasswordScreen token={resetToken} onDone={() => setResetToken(null)} />;
   if (!isLoggedIn) return <LoginScreen onLogin={handleLogin} />;
 
   const tabs = [
@@ -2614,13 +2890,23 @@ export default function SalesDashboard() {
                 <p className="text-gray-600 text-xs">Dashboard Comercial</p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 text-gray-500 hover:text-red-400 transition text-sm px-3 py-2 rounded-xl hover:bg-gray-800"
-            >
-              <LogOut size={15} />
-              <span className="hidden sm:inline">Cerrar sesión</span>
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowChangePwd(true)}
+                className="flex items-center gap-1.5 text-gray-500 hover:text-white transition text-sm px-3 py-2 rounded-xl hover:bg-gray-800"
+                title="Cambiar contraseña"
+              >
+                <Pencil size={14} />
+                <span className="hidden sm:inline text-xs">Contraseña</span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 text-gray-500 hover:text-red-400 transition text-sm px-3 py-2 rounded-xl hover:bg-gray-800"
+              >
+                <LogOut size={15} />
+                <span className="hidden sm:inline">Salir</span>
+              </button>
+            </div>
           </div>
 
           {/* Tabs */}
@@ -2714,6 +3000,8 @@ export default function SalesDashboard() {
           />
         )}
       </main>
+
+      {showChangePwd && <ChangePasswordModal onClose={() => setShowChangePwd(false)} />}
     </div>
   );
 }

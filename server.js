@@ -4,6 +4,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { Resend } from "resend";
 
 const { Pool } = pg;
 const app = express();
@@ -17,6 +19,8 @@ const pool = new Pool({
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_in_production";
+const APP_URL    = process.env.APP_URL    || "http://localhost:5173";
+const resend     = new Resend(process.env.RESEND_API_KEY || "");
 
 async function initDB() {
   await pool.query(`
@@ -93,6 +97,19 @@ async function initDB() {
     await pool.query(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS negocio_id INTEGER NOT NULL DEFAULT 1`);
   }
 
+  // Migración: email en usuarios
+  await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT`);
+
+  // Tabla tokens de reset
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      token TEXT UNIQUE NOT NULL,
+      expires_at TIMESTAMP NOT NULL
+    )
+  `);
+
   console.log("Tablas listas.");
 }
 
@@ -110,14 +127,14 @@ function requireAuth(req, res, next) {
 
 // ─── API: Auth ────────────────────────────────────────────────────────────────
 app.post("/api/register", async (req, res) => {
-  const { username, password, negocio_nombre } = req.body;
+  const { username, password, negocio_nombre, email } = req.body;
   if (!username || !password || !negocio_nombre)
     return res.status(400).json({ error: "Faltan campos requeridos" });
   try {
     const hash = await bcrypt.hash(password, 10);
     const { rows } = await pool.query(
-      "INSERT INTO usuarios (username, password_hash, negocio_nombre) VALUES ($1,$2,$3) RETURNING id, username, negocio_nombre",
-      [username.trim().toLowerCase(), hash, negocio_nombre.trim()]
+      "INSERT INTO usuarios (username, password_hash, negocio_nombre, email) VALUES ($1,$2,$3,$4) RETURNING id, username, negocio_nombre",
+      [username.trim().toLowerCase(), hash, negocio_nombre.trim(), email?.trim().toLowerCase() || null]
     );
     const token = jwt.sign({ id: rows[0].id, username: rows[0].username, negocio_nombre: rows[0].negocio_nombre }, JWT_SECRET, { expiresIn: "30d" });
     res.json({ token, negocio_nombre: rows[0].negocio_nombre });
@@ -125,6 +142,68 @@ app.post("/api/register", async (req, res) => {
     if (err.code === "23505") return res.status(409).json({ error: "El nombre de usuario ya está en uso" });
     throw err;
   }
+});
+
+// ─── API: Cambiar contraseña ──────────────────────────────────────────────────
+app.patch("/api/me/password", requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: "Faltan campos" });
+  if (new_password.length < 6) return res.status(400).json({ error: "La nueva contraseña debe tener al menos 6 caracteres" });
+  const { rows } = await pool.query("SELECT password_hash FROM usuarios WHERE id=$1", [req.user.id]);
+  if (!rows.length) return res.status(404).json({ error: "Usuario no encontrado" });
+  const ok = await bcrypt.compare(current_password, rows[0].password_hash);
+  if (!ok) return res.status(401).json({ error: "La contraseña actual es incorrecta" });
+  const hash = await bcrypt.hash(new_password, 10);
+  await pool.query("UPDATE usuarios SET password_hash=$1 WHERE id=$2", [hash, req.user.id]);
+  res.json({ ok: true });
+});
+
+// ─── API: Recuperar contraseña ────────────────────────────────────────────────
+app.post("/api/forgot-password", async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: "Falta el email" });
+  const { rows } = await pool.query("SELECT id, negocio_nombre FROM usuarios WHERE email=$1", [email.trim().toLowerCase()]);
+  if (rows.length) {
+    const token = crypto.randomBytes(32).toString("hex");
+    await pool.query(
+      "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1,$2, NOW() + INTERVAL '1 hour')",
+      [rows[0].id, token]
+    );
+    const link = `${APP_URL}?reset=${token}`;
+    await resend.emails.send({
+      from: "Control de Ventas <onboarding@resend.dev>",
+      to: email.trim().toLowerCase(),
+      subject: "Recupera tu contraseña — Control de Ventas",
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px;background:#111;color:#fff;border-radius:16px">
+          <h2 style="color:#00C896;margin-bottom:8px">Recuperar contraseña</h2>
+          <p style="color:#9ca3af">Hola <strong style="color:#fff">${rows[0].negocio_nombre}</strong>,</p>
+          <p style="color:#9ca3af">Recibimos una solicitud para restablecer tu contraseña. Haz clic en el botón para continuar:</p>
+          <a href="${link}" style="display:inline-block;margin:24px 0;background:#00C896;color:#111;font-weight:700;padding:14px 28px;border-radius:12px;text-decoration:none">
+            Restablecer contraseña
+          </a>
+          <p style="color:#6b7280;font-size:12px">Este link expira en 1 hora. Si no solicitaste esto, ignora este email.</p>
+        </div>
+      `,
+    });
+  }
+  // Siempre responder igual para no revelar si el email existe
+  res.json({ ok: true });
+});
+
+app.post("/api/reset-password", async (req, res) => {
+  const { token, new_password } = req.body;
+  if (!token || !new_password) return res.status(400).json({ error: "Faltan campos" });
+  if (new_password.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+  const { rows } = await pool.query(
+    "SELECT * FROM password_reset_tokens WHERE token=$1 AND expires_at > NOW()",
+    [token]
+  );
+  if (!rows.length) return res.status(400).json({ error: "El link es inválido o ya expiró. Solicita uno nuevo." });
+  const hash = await bcrypt.hash(new_password, 10);
+  await pool.query("UPDATE usuarios SET password_hash=$1 WHERE id=$2", [hash, rows[0].user_id]);
+  await pool.query("DELETE FROM password_reset_tokens WHERE token=$1", [token]);
+  res.json({ ok: true });
 });
 
 app.post("/api/login", async (req, res) => {
