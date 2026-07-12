@@ -2116,6 +2116,9 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
   const [editingId, setEditingId] = useState(null);
   const [editFields, setEditFields] = useState({});
 
+  // ── Filtro por empresa ───────────────────────────────────────────────────────
+  const [empresaFiltro, setEmpresaFiltro] = useState("");
+
   const empresasExistentes = useMemo(
     () => [...new Set(gastos.map((g) => g.empresa))].sort(),
     [gastos]
@@ -2152,9 +2155,14 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
     });
   }, [gastosMes, selectedMonth, selectedYear]);
 
+  const gastosVisibles = useMemo(
+    () => (empresaFiltro ? gastosMes.filter((g) => g.empresa === empresaFiltro) : gastosMes),
+    [gastosMes, empresaFiltro]
+  );
+
   const gastosPorDia = useMemo(() => {
     const map = {};
-    gastosMes.forEach((g) => {
+    gastosVisibles.forEach((g) => {
       if (!map[g.fecha]) map[g.fecha] = [];
       map[g.fecha].push(g);
     });
@@ -2381,6 +2389,30 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Filtro por empresa */}
+          {porEmpresa.length > 0 && (
+            <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800">
+              <select
+                value={empresaFiltro}
+                onChange={(e) => setEmpresaFiltro(e.target.value)}
+                className="w-full bg-gray-800 text-white rounded-xl px-4 py-2.5 border border-gray-700 focus:outline-none text-sm">
+                <option value="">Todas las empresas</option>
+                {porEmpresa.map(({ name, value }) => (
+                  <option key={name} value={name}>{name} — {formatCLP(value)}</option>
+                ))}
+              </select>
+              {empresaFiltro && (
+                <div className="mt-3 rounded-xl px-5 py-4 flex items-center justify-between"
+                  style={{ background: "rgba(255,107,53,0.1)", border: "1px solid rgba(255,107,53,0.25)" }}>
+                  <p className="text-white font-semibold">{empresaFiltro}</p>
+                  <p className="font-bold text-xl" style={{ color: "#FF6B35" }}>
+                    {formatCLP(porEmpresa.find((e) => e.name === empresaFiltro)?.value || 0)}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
