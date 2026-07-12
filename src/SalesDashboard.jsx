@@ -53,9 +53,10 @@ const api = {
   postVenta:   (v) => jfetch("/api/ventas",  { method: "POST",   headers: jsonH(), body: JSON.stringify(v) }),
   deleteVenta: (id) => jfetch(`/api/ventas/${id}`, { method: "DELETE", headers: authH() }),
 
-  getFiados:   () => jfetch("/api/fiados", { headers: authH() }),
-  postFiado:   (f) => jfetch("/api/fiados",  { method: "POST",   headers: jsonH(), body: JSON.stringify(f) }),
-  deleteFiado: (id) => jfetch(`/api/fiados/${id}`, { method: "DELETE", headers: authH() }),
+  getFiados:      () => jfetch("/api/fiados", { headers: authH() }),
+  postFiado:      (f) => jfetch("/api/fiados",  { method: "POST",   headers: jsonH(), body: JSON.stringify(f) }),
+  deleteFiado:    (id) => jfetch(`/api/fiados/${id}`, { method: "DELETE", headers: authH() }),
+  pagarTotalFiado:(b) => jfetch("/api/fiados/pagar-total", { method: "POST", headers: jsonH(), body: JSON.stringify(b) }),
 
   getAbonos:   () => jfetch("/api/abonos", { headers: authH() }),
   postAbono:   (a) => jfetch("/api/abonos",  { method: "POST",   headers: jsonH(), body: JSON.stringify(a) }),
@@ -1704,26 +1705,28 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
   const grupos = useMemo(() => {
     const map = {};
     fiados.forEach((f) => {
-      if (!map[f.nombre]) map[f.nombre] = { items: [], abonos: [] };
-      map[f.nombre].items.push(f);
+      if (!map[f.nombre]) map[f.nombre] = { items: [], itemsPagados: [], abonos: [] };
+      if (f.pagado) map[f.nombre].itemsPagados.push(f);
+      else          map[f.nombre].items.push(f);
     });
     abonos.forEach((a) => {
-      if (!map[a.nombre]) map[a.nombre] = { items: [], abonos: [] };
+      if (!map[a.nombre]) map[a.nombre] = { items: [], itemsPagados: [], abonos: [] };
       map[a.nombre].abonos.push(a);
     });
-    // Ordena items y abonos por fecha
     Object.values(map).forEach((g) => {
       g.items.sort((a, b) => a.fecha.localeCompare(b.fecha));
+      g.itemsPagados.sort((a, b) => a.fecha.localeCompare(b.fecha));
       g.abonos.sort((a, b) => a.fecha.localeCompare(b.fecha));
+      // Balance solo sobre deudas activas (no pagadas)
       g.totalDebe = g.items.reduce((s, i) => s + i.monto, 0);
       g.totalPago = g.abonos.reduce((s, a) => s + a.monto, 0);
-      g.balance = g.totalDebe - g.totalPago;
+      g.balance   = g.totalDebe - g.totalPago;
     });
     return map;
   }, [fiados, abonos]);
 
-  const pendientes = Object.entries(grupos).filter(([, g]) => g.balance > 0);
-  const saldados   = Object.entries(grupos).filter(([, g]) => g.balance <= 0);
+  const pendientes = Object.entries(grupos).filter(([, g]) => g.balance > 0 || g.items.length > 0 || g.itemsPagados.length > 0);
+  const saldados   = Object.entries(grupos).filter(([, g]) => g.balance <= 0 && g.items.length === 0 && g.itemsPagados.length === 0);
 
   const totalGlobalPendiente = pendientes.reduce((s, [, g]) => s + g.balance, 0);
 
@@ -1759,6 +1762,12 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
   const handleDeleteFiado = async (id) => {
     await api.deleteFiado(id);
     await onSaveFiado();
+  };
+
+  const handlePagarTotal = async (nombre) => {
+    await api.pagarTotalFiado({ nombre });
+    await onSaveFiado();
+    await onSaveAbono();
   };
 
   const handleDeleteAbono = async (id) => {
@@ -1901,9 +1910,13 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
                     <div className="px-5 py-4 border-b border-gray-800">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-white font-bold">{nombreFiador}</p>
-                        <p className="font-bold text-lg" style={{ color: "#FF6B35" }}>{formatCLP(g.balance)}</p>
+                        {g.balance > 0 ? (
+                          <p className="font-bold text-lg" style={{ color: "#FF6B35" }}>{formatCLP(g.balance)}</p>
+                        ) : (
+                          <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ background: "rgba(0,200,150,0.15)", color: "#00C896" }}>Al día ✓</span>
+                        )}
                       </div>
-                      {g.totalPago > 0 && (
+                      {g.totalPago > 0 && g.totalDebe > 0 && (
                         <>
                           <div className="h-1.5 bg-gray-800 rounded-full mb-1">
                             <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, background: "#00C896" }} />
@@ -1916,7 +1929,24 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
                       )}
                     </div>
 
-                    {/* Ítems */}
+                    {/* Ítems pagados (tachados) */}
+                    {g.itemsPagados.length > 0 && (
+                      <div className="divide-y divide-gray-800 bg-gray-950">
+                        {g.itemsPagados.map((item) => (
+                          <div key={item.id} className="px-5 py-2.5 flex items-center justify-between opacity-50">
+                            <div>
+                              <span className="text-gray-600 text-xs line-through">{fmtFecha(item.fecha)}</span>
+                              {item.descripcion && (
+                                <span className="text-gray-600 text-xs ml-2 line-through">— {item.descripcion}</span>
+                              )}
+                            </div>
+                            <span className="text-gray-600 text-sm line-through">{formatCLP(item.monto)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Ítems activos */}
                     <div className="divide-y divide-gray-800">
                       {g.items.map((item) => (
                         <div key={item.id} className="px-5 py-2.5 flex items-center justify-between">
@@ -1993,23 +2023,35 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
                     )}
 
                     {/* Acciones fiador */}
-                    <div className="border-t border-gray-800 px-5 py-3 flex gap-2">
-                      <button
-                        onClick={() => { setNombre(nombreFiador); window.scrollTo({ top: 0, behavior: "smooth" }); }}
-                        className="flex-1 text-xs font-medium py-2 rounded-lg transition"
-                        style={{ background: "rgba(255,107,53,0.12)", color: "#FF6B35" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.22)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.12)")}>
-                        + Agregar ítem
-                      </button>
-                      <button
-                        onClick={() => { setAbonoTarget(isAbonoOpen ? null : nombreFiador); setAbonoMonto(""); setAbonoError(""); }}
-                        className="flex-1 text-xs font-medium py-2 rounded-lg transition"
-                        style={{ background: "rgba(0,200,150,0.12)", color: "#00C896" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.22)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.12)")}>
-                        $ Registrar abono
-                      </button>
+                    <div className="border-t border-gray-800 px-5 py-3 flex flex-col gap-2">
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setNombre(nombreFiador); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                          className="flex-1 text-xs font-medium py-2 rounded-lg transition"
+                          style={{ background: "rgba(255,107,53,0.12)", color: "#FF6B35" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.22)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,107,53,0.12)")}>
+                          + Agregar ítem
+                        </button>
+                        <button
+                          onClick={() => { setAbonoTarget(isAbonoOpen ? null : nombreFiador); setAbonoMonto(""); setAbonoError(""); }}
+                          className="flex-1 text-xs font-medium py-2 rounded-lg transition"
+                          style={{ background: "rgba(0,200,150,0.12)", color: "#00C896" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.22)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.12)")}>
+                          $ Registrar abono
+                        </button>
+                      </div>
+                      {g.balance > 0 && (
+                        <button
+                          onClick={() => handlePagarTotal(nombreFiador)}
+                          className="w-full text-xs font-semibold py-2 rounded-lg transition"
+                          style={{ background: "rgba(0,200,150,0.18)", color: "#00C896", border: "1px solid rgba(0,200,150,0.3)" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.28)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.18)")}>
+                          ✓ Pagar deuda total ({formatCLP(g.balance)})
+                        </button>
+                      )}
                     </div>
                     {abonoSuccess === nombreFiador && (
                       <div className="px-5 pb-3">
