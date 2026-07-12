@@ -1725,7 +1725,9 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
     return map;
   }, [fiados, abonos]);
 
-  const pendientes = Object.entries(grupos).filter(([, g]) => g.balance > 0 || g.items.length > 0 || g.itemsPagados.length > 0);
+  const pendientes = Object.entries(grupos)
+    .filter(([, g]) => g.balance > 0 || g.items.length > 0 || g.itemsPagados.length > 0)
+    .sort(([, a], [, b]) => b.balance - a.balance);
   const saldados   = Object.entries(grupos).filter(([, g]) => g.balance <= 0 && g.items.length === 0 && g.itemsPagados.length === 0);
 
   const totalGlobalPendiente = pendientes.reduce((s, [, g]) => s + g.balance, 0);
