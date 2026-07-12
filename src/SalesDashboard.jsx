@@ -2384,8 +2384,10 @@ function GastosSection({ gastos, selectedMonth, selectedYear, onMonthChange, onY
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
                   <XAxis dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} />
                   <YAxis tickFormatter={(v) => "$" + (v / 1000).toFixed(0) + "k"} tick={{ fill: "#9ca3af", fontSize: 10 }} width={45} />
-                  <Tooltip contentStyle={{ background: "#111827", border: "1px solid #374151", borderRadius: "12px" }}
-                    labelStyle={{ color: "#f9fafb", fontWeight: 600 }} formatter={(v) => [formatCLP(v), "Gasto"]} />
+                  <Tooltip contentStyle={{ background: "#ffffff", border: "none", borderRadius: "12px", boxShadow: "0 4px 20px rgba(0,0,0,0.4)" }}
+                    labelStyle={{ color: "#111827", fontWeight: 700, fontSize: 14 }}
+                    itemStyle={{ color: "#FF6B35", fontWeight: 600, fontSize: 15 }}
+                    formatter={(v) => [formatCLP(v), "Gasto"]} />
                   <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                     {porEmpresa.map((_, i) => <Cell key={i} fill={COLORES_GASTOS[i % COLORES_GASTOS.length]} />)}
                   </Bar>
