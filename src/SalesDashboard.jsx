@@ -1683,6 +1683,10 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
   const [success, setSuccess] = useState(false);
   const [errors, setErrors] = useState({});
 
+  // ── Pagar total ────────────────────────────────────────────────────────────
+  const [pagarLoading, setPagarLoading] = useState(null);
+  const [pagarError, setPagarError]     = useState("");
+
   // ── Abono inline: { nombre, monto, fecha } ─────────────────────────────────
   const [abonoTarget, setAbonoTarget] = useState(null); // nombre del fiador
   const [abonoMonto, setAbonoMonto] = useState("");
@@ -1767,9 +1771,17 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
   };
 
   const handlePagarTotal = async (nombre) => {
-    await api.pagarTotalFiado({ nombre });
-    await onSaveFiado();
-    await onSaveAbono();
+    setPagarLoading(nombre);
+    setPagarError("");
+    try {
+      await api.pagarTotalFiado({ nombre });
+      await onSaveFiado();
+      await onSaveAbono();
+    } catch (err) {
+      setPagarError(err?.error || "Error al procesar el pago. Intenta de nuevo.");
+    } finally {
+      setPagarLoading(null);
+    }
   };
 
   const handleDeleteAbono = async (id) => {
@@ -2045,14 +2057,21 @@ function FiadosExpress({ fiados, abonos, onSaveFiado, onSaveAbono }) {
                         </button>
                       </div>
                       {g.balance > 0 && (
-                        <button
-                          onClick={() => handlePagarTotal(nombreFiador)}
-                          className="w-full text-xs font-semibold py-2 rounded-lg transition"
-                          style={{ background: "rgba(0,200,150,0.18)", color: "#00C896", border: "1px solid rgba(0,200,150,0.3)" }}
-                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.28)")}
-                          onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(0,200,150,0.18)")}>
-                          ✓ Pagar deuda total ({formatCLP(g.balance)})
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handlePagarTotal(nombreFiador)}
+                            disabled={pagarLoading === nombreFiador}
+                            className="w-full text-xs font-semibold py-2 rounded-lg transition"
+                            style={{ background: "rgba(0,200,150,0.18)", color: "#00C896", border: "1px solid rgba(0,200,150,0.3)",
+                                     opacity: pagarLoading === nombreFiador ? 0.6 : 1, cursor: pagarLoading === nombreFiador ? "not-allowed" : "pointer" }}
+                            onMouseEnter={(e) => { if (!pagarLoading) e.currentTarget.style.background = "rgba(0,200,150,0.28)"; }}
+                            onMouseLeave={(e) => { if (!pagarLoading) e.currentTarget.style.background = "rgba(0,200,150,0.18)"; }}>
+                            {pagarLoading === nombreFiador ? "Procesando..." : `✓ Pagar deuda total (${formatCLP(g.balance)})`}
+                          </button>
+                          {pagarError && pagarLoading === null && (
+                            <p className="text-xs text-red-400 text-center mt-1">{pagarError}</p>
+                          )}
+                        </>
                       )}
                     </div>
                     {abonoSuccess === nombreFiador && (
