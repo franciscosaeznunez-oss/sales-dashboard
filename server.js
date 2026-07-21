@@ -100,6 +100,9 @@ async function initDB() {
   // Migración: email en usuarios
   await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS email TEXT`);
 
+  // Migración: campo pagado en fiados
+  await pool.query(`ALTER TABLE fiados ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT FALSE`);
+
   // Tabla tokens de reset
   await pool.query(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -259,6 +262,20 @@ app.post("/api/fiados", requireAuth, async (req, res) => {
 app.delete("/api/fiados/:id", requireAuth, async (req, res) => {
   await pool.query("DELETE FROM fiados WHERE id=$1 AND negocio_id=$2", [req.params.id, req.user.id]);
   res.json({ ok: true });
+});
+
+app.post("/api/fiados/pagar-total", requireAuth, async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre) return res.status(400).json({ error: "Falta el nombre" });
+  try {
+    await pool.query("DELETE FROM fiados WHERE nombre=$1 AND negocio_id=$2 AND pagado=TRUE", [nombre, req.user.id]);
+    await pool.query("UPDATE fiados SET pagado=TRUE WHERE nombre=$1 AND negocio_id=$2 AND pagado=FALSE", [nombre, req.user.id]);
+    await pool.query("DELETE FROM abonos WHERE nombre=$1 AND negocio_id=$2", [nombre, req.user.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("pagar-total error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── API: Abonos ──────────────────────────────────────────────────────────────
